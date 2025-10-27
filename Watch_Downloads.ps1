@@ -29,22 +29,16 @@ Write-Host "输出文件(SRT、MP4)将自动忽略，避免重复触发" -Foregr
 Write-Host "按 Ctrl+C 停止监控" -ForegroundColor Cyan
 Write-Host ""
 
-# 队列机制：确保同时只有一个转换任务在执行，队列中只保留一个待处理任务
+# 执行锁：确保同时只有一个转换任务在执行
 $script:isProcessing = $false
-$script:pendingTask = $null
 
 # 执行脚本的函数
 function Execute-ConversionScript {
     param($fileName)
     
-    # 如果正在处理，更新待处理任务
+    # 如果正在处理，跳过本次调用（Convert脚本会自动处理整个文件夹）
     if ($script:isProcessing) {
-        if ($null -eq $script:pendingTask) {
-            Write-Host "[$(Get-Date -Format 'HH:mm:ss')] 检测到文件: $fileName (任务已加入队列，等待当前任务完成)" -ForegroundColor Gray
-        } else {
-            Write-Host "[$(Get-Date -Format 'HH:mm:ss')] 检测到文件: $fileName (替换队列中的任务: $script:pendingTask)" -ForegroundColor Gray
-        }
-        $script:pendingTask = $fileName
+        Write-Host "[$(Get-Date -Format 'HH:mm:ss')] 检测到文件: $fileName (正在处理其他文件，将稍后自动处理)" -ForegroundColor Gray
         return
     }
     
@@ -72,15 +66,6 @@ function Execute-ConversionScript {
     
     # 标记为处理完成
     $script:isProcessing = $false
-    
-    # 检查是否有待处理的任务
-    if ($null -ne $script:pendingTask) {
-        $nextFile = $script:pendingTask
-        $script:pendingTask = $null
-        Write-Host "[$(Get-Date -Format 'HH:mm:ss')] 队列中有任务，开始处理: $nextFile" -ForegroundColor Magenta
-        Start-Sleep -Seconds 1
-        Execute-ConversionScript -fileName $nextFile
-    }
 }
 
 # 创建文件系统监视器
