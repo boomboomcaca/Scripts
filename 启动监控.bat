@@ -7,7 +7,5 @@ echo.
 echo 正在启动监控...
 echo.
 
-powershell.exe -ExecutionPolicy Bypass -File "%~dp0Watch_Downloads.ps1"
-
-pause
+powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -File "%~dp0Watch_Downloads.ps1"
 
