@@ -121,27 +121,49 @@ if ($Path -ne ".") {
 # 检查Python环境
 Write-Host ""
 Write-Host "[1/4] 检查Python环境..." -ForegroundColor Green
+
+# 优先使用 Python 3.11（有 CUDA 支持）
+$pythonCmd = "python"
+$usePy311 = $false
+
 try {
-    $pythonVersion = python --version 2>&1
-    if ($pythonVersion -match "Python (\d+)\.(\d+)") {
-        $majorVersion = [int]$matches[1]
-        $minorVersion = [int]$matches[2]
-        if ($majorVersion -ge 3 -and $minorVersion -ge 8) {
-            Write-Host "✅ 检测到Python: $pythonVersion" -ForegroundColor Green
+    # 尝试 py -3.11
+    $py311Version = py -3.11 --version 2>&1
+    if ($py311Version -match "Python 3\.11") {
+        $pythonCmd = "py -3.11"
+        $usePy311 = $true
+        Write-Host "✅ 检测到Python 3.11: $py311Version" -ForegroundColor Green
+        Write-Host "   (使用 Python 3.11 以支持 CUDA GPU 加速)" -ForegroundColor Gray
+    }
+} catch {}
+
+if (-not $usePy311) {
+    # 使用默认 python
+    try {
+        $pythonVersion = python --version 2>&1
+        if ($pythonVersion -match "Python (\d+)\.(\d+)") {
+            $majorVersion = [int]$matches[1]
+            $minorVersion = [int]$matches[2]
+            if ($majorVersion -ge 3 -and $minorVersion -ge 8) {
+                Write-Host "✅ 检测到Python: $pythonVersion" -ForegroundColor Green
+                if ($majorVersion -eq 3 -and $minorVersion -ge 13) {
+                    Write-Host "   ⚠️  Python 3.13 可能不支持 CUDA，建议降级到 Python 3.11" -ForegroundColor Yellow
+                }
+            } else {
+                throw "Python版本过低，需要3.8或更高版本"
+            }
         } else {
-            throw "Python版本过低，需要3.8或更高版本"
+            throw "无法检测Python版本"
         }
-    } else {
-        throw "无法检测Python版本"
+    } catch {
+        Write-Host "❌ 未找到Python或版本不符合要求" -ForegroundColor Red
+        Write-Host "请安装Python 3.8或更高版本" -ForegroundColor Yellow
+        Write-Host "下载地址: https://www.python.org/downloads/" -ForegroundColor Yellow
+        if (-not $NonInteractive) {
+            Read-Host "按任意键退出"
+        }
+        exit 1
     }
-} catch {
-    Write-Host "❌ 未找到Python或版本不符合要求" -ForegroundColor Red
-    Write-Host "请安装Python 3.8或更高版本" -ForegroundColor Yellow
-    Write-Host "下载地址: https://www.python.org/downloads/" -ForegroundColor Yellow
-    if (-not $NonInteractive) {
-        Read-Host "按任意键退出"
-    }
-    exit 1
 }
 
 # 检查faster-whisper库
@@ -150,12 +172,16 @@ Write-Host "[2/4] 检查faster-whisper库..." -ForegroundColor Green
 $checkScript = @"
 try:
     import faster_whisper
-    print("installed")
+    print('installed')
 except ImportError:
-    print("not_installed")
+    print('not_installed')
 "@
 
-$checkResult = python -c $checkScript 2>&1
+if ($pythonCmd -eq "py -3.11") {
+    $checkResult = py -3.11 -c $checkScript 2>&1
+} else {
+    $checkResult = python -c $checkScript 2>&1
+}
 if ($checkResult -match "installed") {
     Write-Host "✅ faster-whisper已安装" -ForegroundColor Green
 } else {
@@ -364,13 +390,19 @@ foreach ($file in $filesToProcess) {
     
     try {
         # 调用Python脚本进行转录
-        $process = Start-Process -FilePath "python" -ArgumentList @(
+        $pythonArgs = @(
             "`"$tempPythonScript`"",
             "`"$($file.FullName)`"",
             "`"$outputFile`"",
             $Model,
             $Language
-        ) -Wait -PassThru -NoNewWindow
+        )
+        
+        if ($pythonCmd -eq "py -3.11") {
+            $process = Start-Process -FilePath "py" -ArgumentList (@("-3.11") + $pythonArgs) -Wait -PassThru -NoNewWindow
+        } else {
+            $process = Start-Process -FilePath "python" -ArgumentList $pythonArgs -Wait -PassThru -NoNewWindow
+        }
         
         if ($process.ExitCode -eq 0) {
             Write-Host "✅ 成功生成字幕: $($file.Name)" -ForegroundColor Green
