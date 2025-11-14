@@ -29,7 +29,7 @@ try {
 
 # 双路径监控配置
 $watchPathLocal = "C:\Users\Joker\Downloads"      # 本地路径：格式转换
-$watchPathNetwork = "\\192.168.1.111\data\Scenes"  # 网络路径：语音识别
+$watchPathNetwork = "C:\Users\Joker\Downloads"  # 网络路径：语音识别
 
 # 检查脚本文件是否存在
 $convertScriptPath = "D:\Soft\Scripts\Convert_to_Mp4_Srt.ps1"
