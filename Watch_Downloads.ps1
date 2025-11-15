@@ -1,7 +1,7 @@
 # 文件夹监控脚本 - 监听文件夹变化并自动执行格式转换脚本
 
 # 监控配置
-$watchPath = "C:\Users\Joker\Music"
+$watchPath = "C:\Users\Joker\Downloads"
 
 # 检查脚本文件是否存在
 $convertScriptPath = "D:\Soft\Scripts\Convert_to_Mp4_Srt.ps1"
@@ -79,7 +79,20 @@ $onCreated = Register-ObjectEvent -InputObject $watcher -EventName "Created" -Me
             
             # 检查目标文件是否已存在
             if (Test-Path $destinationFile) {
-                Write-Host "⚠️  目标文件已存在，跳过: $name" -ForegroundColor Yellow
+                $sourceSize = (Get-Item $sourceFile).Length
+                $destSize = (Get-Item $destinationFile).Length
+                
+                if ($sourceSize -gt $destSize) {
+                    # 源文件更大，覆盖旧文件
+                    Write-Host "⚠️  目标文件已存在 (源: $([math]::Round($sourceSize/1MB,2))MB > 目标: $([math]::Round($destSize/1MB,2))MB)，覆盖旧文件" -ForegroundColor Yellow
+                    Move-Item -Path $sourceFile -Destination $destinationFile -Force
+                    Write-Host "✅ 已覆盖到网络位置: $name" -ForegroundColor Green
+                } else {
+                    # 源文件不大于旧文件，删除源文件
+                    Write-Host "⚠️  目标文件已存在 (源: $([math]::Round($sourceSize/1MB,2))MB <= 目标: $([math]::Round($destSize/1MB,2))MB)，删除源文件" -ForegroundColor Yellow
+                    Remove-Item -Path $sourceFile -Force
+                    Write-Host "✅ 已删除源文件: $name" -ForegroundColor Green
+                }
                 return
             }
             
