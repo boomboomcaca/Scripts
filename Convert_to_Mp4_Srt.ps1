@@ -1,4 +1,4 @@
-# GPU加速视频转换 + 字幕清理 + 编码分析工具
+﻿# GPU加速视频转换 + 字幕清理 + 编码分析工具
 
 param(
     [string]$Path = ".",
@@ -639,7 +639,7 @@ function Clear-SubtitleText {
 
 # 转换各种字幕格式并清理HTML标签
 Write-Host ""
-Write-Host "[6/6] 处理字幕文件..." -ForegroundColor Green
+Write-Host "[6/7] 处理字幕文件..." -ForegroundColor Green
 
 # 合并所有需要转换的字幕文件
 $allSubtitleFiles = @()
@@ -762,6 +762,65 @@ Write-Host "  🔄 视频格式转换为MP4+H.264" -ForegroundColor White
 Write-Host "  📝 字幕格式转换为SRT (支持VTT/ASS/SSA/SUB/SBV)" -ForegroundColor White
 Write-Host "  🧹 格式标签清理 (HTML/ASS/SSA)" -ForegroundColor White
 
+
+# 移动MP4和SRT文件到网络文件夹
+Write-Host ""
+Write-Host "[7/7] 移动文件到网络文件夹..." -ForegroundColor Green
+
+$networkPath = "\\192.168.1.111\data\Scenes"
+
+# 检查网络路径是否可访问
+if (Test-Path $networkPath) {
+ Write-Host " 网络路径可访问: $networkPath" -ForegroundColor Green
+    
+    # 获取所有MP4和SRT文件
+    $mp4FilesToMove = Get-ChildItem -Filter "*.mp4" -ErrorAction SilentlyContinue
+    $srtFilesToMove = Get-ChildItem -Filter "*.srt" -ErrorAction SilentlyContinue
+    $allFilesToMove = @($mp4FilesToMove) + @($srtFilesToMove)
+    
+    if ($allFilesToMove.Count -gt 0) {
+ Write-Host " 找到 $($allFilesToMove.Count) 个文件需要移动 (MP4: $($mp4FilesToMove.Count), SRT: $($srtFilesToMove.Count))" -ForegroundColor White
+        
+        $movedCount = 0
+        $skipCount = 0
+        $errorCount = 0
+        
+        foreach ($file in $allFilesToMove) {
+            $destinationPath = Join-Path $networkPath $file.Name
+            
+            try {
+                # 检查目标文件是否已存在
+                if (Test-Path $destinationPath) {
+                    Write-Host "  跳过 (目标已存在): $($file.Name)" -ForegroundColor Yellow
+                    $skipCount++
+                } else {
+                    # 移动文件
+                    Move-Item -Path $file.FullName -Destination $destinationPath -Force
+                    Write-Host " 已移动: $($file.Name)" -ForegroundColor Green
+                    $movedCount++
+                }
+            } catch {
+                Write-Host " 移动失败: $($file.Name) - $($_.Exception.Message)" -ForegroundColor Red
+                $errorCount++
+            }
+        }
+        
+        Write-Host ""
+        Write-Host " 文件移动统计:" -ForegroundColor Green
+        Write-Host "   成功移动: $movedCount 个文件" -ForegroundColor Green
+        if ($skipCount -gt 0) {
+            Write-Host "    跳过: $skipCount 个文件" -ForegroundColor Yellow
+        }
+        if ($errorCount -gt 0) {
+            Write-Host "   失败: $errorCount 个文件" -ForegroundColor Red
+        }
+    } else {
+        Write-Host "  未找到需要移动的MP4或SRT文件" -ForegroundColor Yellow
+    }
+} else {
+    Write-Host " 无法访问网络路径: $networkPath" -ForegroundColor Red
+    Write-Host "   请确认网络连接和路径权限" -ForegroundColor Yellow
+}
 Write-Host ""
 Write-Host "✨ 所有任务已完成！" -ForegroundColor Green
 

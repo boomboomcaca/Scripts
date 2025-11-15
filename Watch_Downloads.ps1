@@ -1,7 +1,7 @@
 # 文件夹监控脚本 - 监听文件夹变化并自动执行格式转换脚本
 
 # 监控配置
-$watchPath = "C:\Users\Joker\Downloads"
+$watchPath = "C:\Users\Joker\Music"
 
 # 检查脚本文件是否存在
 $convertScriptPath = "D:\Soft\Scripts\Convert_to_Mp4_Srt.ps1"
