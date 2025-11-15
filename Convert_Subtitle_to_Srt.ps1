@@ -1,6 +1,4 @@
 # 通用字幕格式转换工具 - 转换所有字幕为SRT格式
-# 作者: Claude
-# 功能: 将ASS、SSA、VTT、SUB、SBV等字幕格式统一转换为SRT格式
 
 param(
     [string]$Path = ".",

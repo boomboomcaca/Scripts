@@ -1,6 +1,4 @@
 # GPU加速视频转换 + 字幕清理 + 编码分析工具
-# 作者: Claude
-# 功能: 批量转换各种视频格式为MP4，转换VTT字幕为SRT，清理HTML标签，分析编码格式
 
 param(
     [string]$Path = ".",

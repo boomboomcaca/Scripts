@@ -70,80 +70,20 @@ $onCreated = Register-ObjectEvent -InputObject $watcher -EventName "Created" -Me
     }
     
     Write-Host "[$(Get-Date -Format 'HH:mm:ss')] 检测到新文件: $name" -ForegroundColor Yellow
-    
-    # 等待文件写入完成
-    Write-Host "[$(Get-Date -Format 'HH:mm:ss')] 等待文件写入完成..." -ForegroundColor Gray
-    Start-Sleep -Seconds 2
-    
-    try {
-        Write-Host "========================================" -ForegroundColor Cyan
-        Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] 开始处理文件" -ForegroundColor Cyan
-        Write-Host "文件: $name" -ForegroundColor White
-        Write-Host "路径: $watchPath" -ForegroundColor White
-        Write-Host "========================================" -ForegroundColor Cyan
-        
-        Push-Location $watchPath
-        Write-Host "[$(Get-Date -Format 'HH:mm:ss')] 正在调用转换脚本..." -ForegroundColor Cyan
-        & $convertScript -NonInteractive
-        Pop-Location
-        Write-Host "✅ 转换完成！" -ForegroundColor Green
-    } catch {
-        Write-Host "❌ 错误: $_" -ForegroundColor Red
-        Pop-Location -ErrorAction SilentlyContinue
-    }
-}
-
-# 文件更改事件处理（可选 - 通常创建事件就够了）
-# 如需监控文件修改，取消注释以下代码
-<#
-$onChanged = Register-ObjectEvent -InputObject $watcher -EventName "Changed" -MessageData @{
-    WatchPath = $watchPath
-    ConvertScript = $convertScriptPath
-} -Action {
-    $name = $Event.SourceEventArgs.Name
-    $watchPath = $Event.MessageData.WatchPath
-    $convertScript = $Event.MessageData.ConvertScript
-    
-    # 忽略脚本本身和临时文件
-    if ($name -match '\.(tmp|partial|!qB|crdownload)' -or 
-        $name -match 'Convert_to_Mp4_Srt|Watch_Downloads|Convert_Subtitle_to_Srt') {
-        return
-    }
-    
-    # 获取文件扩展名
-    $ext = [System.IO.Path]::GetExtension($name).ToLower()
-    
-    # 忽略SRT和MP4文件
-    if ($ext -eq '.srt' -or $ext -eq '.mp4') {
-        return
-    }
-    
-    # 只处理视频和字幕文件
-    $isVideoFile = $ext -match '\.(ts|avi|mkv|mov|wmv|flv|webm|m4v|3gp|mpg|mpeg|ogv|asf|rm|rmvb)$'
-    $isSubtitleFile = $ext -match '\.(vtt|ass|ssa|sub|sbv)$'
-    
-    if (-not ($isVideoFile -or $isSubtitleFile)) {
-        return
-    }
-    
-    Write-Host "[$(Get-Date -Format 'HH:mm:ss')] 检测到文件更改: $name" -ForegroundColor Yellow
-    
-    # 等待文件写入完成
     Start-Sleep -Seconds 2
     
     try {
         Push-Location $watchPath
         & $convertScript -NonInteractive
         Pop-Location
-        Write-Host "✅ 转换完成！" -ForegroundColor Green
+        Write-Host "✅ 转换完成" -ForegroundColor Green
     } catch {
         Write-Host "❌ 错误: $_" -ForegroundColor Red
         Pop-Location -ErrorAction SilentlyContinue
     }
 }
-#>
 
-Write-Host "监控已启动！等待文件变化..." -ForegroundColor Green
+Write-Host "监控已启动，等待文件变化..." -ForegroundColor Green
 Write-Host ""
 
 # 保持脚本运行
@@ -157,6 +97,5 @@ try {
     $watcher.Dispose()
     Unregister-Event -SourceIdentifier $onCreated.Name -ErrorAction SilentlyContinue
     
-    Write-Host "`n监控已停止。" -ForegroundColor Yellow
+    Write-Host "`n监控已停止" -ForegroundColor Yellow
 }
-
