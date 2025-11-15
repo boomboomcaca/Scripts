@@ -34,7 +34,7 @@ GPU加速视频转换 + 字幕清理 + 编码分析工具
     2. 智能检测视频编码格式（H.264、H.265、AV1、VP9等40+种编码）
     3. 彩色分类显示编码格式并提供统计报告
     4. GPU加速转换所有非MP4+H.264文件为MP4+H.264编码
-    5. 转换VTT字幕为SRT格式并清理HTML标签
+    5. 转换VTT/ASS/SSA/SUB/SBV字幕为SRT格式并清理格式标签
     6. 生成详细的编码分析报告（可选CSV导出）
 
 编码分类支持:
@@ -235,7 +235,7 @@ function Show-CodecStatistics {
 }
 
 # 生成分析报告函数
-function Generate-AnalysisReport {
+function New-AnalysisReport {
     param([array]$VideoFiles)
     
     $analysisResults = @()
@@ -387,12 +387,17 @@ foreach ($ext in $VideoExtensions) {
 
 # 统计字幕文件
 $vttFiles = Get-ChildItem -Filter "*.vtt" -ErrorAction SilentlyContinue
+$assFiles = Get-ChildItem -Filter "*.ass" -ErrorAction SilentlyContinue
+$ssaFiles = Get-ChildItem -Filter "*.ssa" -ErrorAction SilentlyContinue
+$subFiles = Get-ChildItem -Filter "*.sub" -ErrorAction SilentlyContinue
+$sbvFiles = Get-ChildItem -Filter "*.sbv" -ErrorAction SilentlyContinue
 $srtFiles = Get-ChildItem -Filter "*.srt" -ErrorAction SilentlyContinue
+$totalSubFiles = $vttFiles.Count + $assFiles.Count + $ssaFiles.Count + $subFiles.Count + $sbvFiles.Count
 
 if ($allVideoFiles.Count -eq 0) {
     Write-Host "⚠️  未找到任何视频文件" -ForegroundColor Yellow
     Write-Host "支持的格式: TS, AVI, MKV, MOV, WMV, FLV, WEBM, M4V, 3GP, MPG, MPEG, OGV, ASF, RM, RMVB" -ForegroundColor Gray
-    if ($vttFiles.Count -gt 0 -or $srtFiles.Count -gt 0) {
+    if ($totalSubFiles -gt 0 -or $srtFiles.Count -gt 0) {
         Write-Host "但发现字幕文件，将处理字幕转换..." -ForegroundColor Yellow
     } else {
         exit 0
@@ -400,7 +405,7 @@ if ($allVideoFiles.Count -eq 0) {
 }
 
 Write-Host "📊 找到 $($allVideoFiles.Count) 个视频文件" -ForegroundColor White
-Write-Host "📊 找到 $($vttFiles.Count) 个VTT字幕文件" -ForegroundColor White
+Write-Host "📊 找到 $totalSubFiles 个需转换的字幕文件 (VTT: $($vttFiles.Count), ASS: $($assFiles.Count), SSA: $($ssaFiles.Count), SUB: $($subFiles.Count), SBV: $($sbvFiles.Count))" -ForegroundColor White
 Write-Host "📊 找到 $($srtFiles.Count) 个SRT字幕文件" -ForegroundColor White
 
 # 执行编码分析
@@ -409,10 +414,10 @@ if ($allVideoFiles.Count -gt 0) {
     Write-Host "[3/6] 视频编码分析..." -ForegroundColor Green
     
     # 生成详细分析报告
-    $analysisResults = Generate-AnalysisReport -VideoFiles $allVideoFiles
+    $analysisResults = New-AnalysisReport -VideoFiles $allVideoFiles
     
     # 显示编码统计
-    $stats = Show-CodecStatistics -VideoFiles $allVideoFiles
+    Show-CodecStatistics -VideoFiles $allVideoFiles | Out-Null
     
     # 显示转换建议
     Show-ConversionRecommendations -AnalysisResults $analysisResults
@@ -613,44 +618,82 @@ if ($nonMp4H264Files.Count -gt 0) {
     Write-Host "✅ 所有视频文件已经是MP4 + H.264格式，跳过转换" -ForegroundColor Yellow
 }
 
-# 转换VTT字幕并清理HTML标签
+# 清理字幕文本的函数
+function Clear-SubtitleText {
+    param([string]$Text)
+    
+    # 移除HTML标签
+    $cleaned = $Text -replace '<[^>]*>', ''
+    
+    # 移除ASS/SSA格式标签 {\...}
+    $cleaned = $cleaned -replace '\{[^}]*\}', ''
+    
+    # 替换HTML实体
+    $cleaned = $cleaned -replace '&amp;', '&'
+    $cleaned = $cleaned -replace '&lt;', '<'
+    $cleaned = $cleaned -replace '&gt;', '>'
+    $cleaned = $cleaned -replace '&quot;', '"'
+    $cleaned = $cleaned -replace '&#39;', "'"
+    $cleaned = $cleaned -replace '&nbsp;', ' '
+    
+    return $cleaned
+}
+
+# 转换各种字幕格式并清理HTML标签
 Write-Host ""
 Write-Host "[6/6] 处理字幕文件..." -ForegroundColor Green
 
-# 转换VTT字幕
-if ($vttFiles.Count -gt 0) {
-    Write-Host "🔄 转换VTT字幕文件..." -ForegroundColor Yellow
-    $vttSuccessCount = 0
+# 合并所有需要转换的字幕文件
+$allSubtitleFiles = @()
+$allSubtitleFiles += $vttFiles | ForEach-Object { @{ File = $_; Format = "VTT" } }
+$allSubtitleFiles += $assFiles | ForEach-Object { @{ File = $_; Format = "ASS" } }
+$allSubtitleFiles += $ssaFiles | ForEach-Object { @{ File = $_; Format = "SSA" } }
+$allSubtitleFiles += $subFiles | ForEach-Object { @{ File = $_; Format = "SUB" } }
+$allSubtitleFiles += $sbvFiles | ForEach-Object { @{ File = $_; Format = "SBV" } }
+
+if ($allSubtitleFiles.Count -gt 0) {
+    Write-Host "🔄 转换字幕文件为SRT格式..." -ForegroundColor Yellow
+    $subSuccessCount = 0
     
-    foreach ($file in $vttFiles) {
+    foreach ($item in $allSubtitleFiles) {
+        $file = $item.File
+        $format = $item.Format
         $outputFile = [System.IO.Path]::ChangeExtension($file.FullName, "srt")
-        Write-Host "📝 转换字幕: $($file.Name) -> $([System.IO.Path]::GetFileName($outputFile))" -ForegroundColor White
+        
+        # 检查是否已存在SRT文件
+        if (Test-Path $outputFile) {
+            Write-Host "⏭️  跳过 (SRT已存在): $($file.Name)" -ForegroundColor Gray
+            continue
+        }
+        
+        Write-Host "📝 转换字幕 [$format]: $($file.Name) -> $([System.IO.Path]::GetFileName($outputFile))" -ForegroundColor White
         
         try {
             $process = Start-Process -FilePath "ffmpeg" -ArgumentList @(
                 "-i", "`"$($file.FullName)`"",
                 "-y",
                 "`"$outputFile`""
-            ) -Wait -PassThru -NoNewWindow
+            ) -Wait -PassThru -NoNewWindow -RedirectStandardError "$env:TEMP\ffmpeg_error.txt"
             
-            if ($process.ExitCode -eq 0) {
-                Write-Host "✅ 转换完成，正在清理HTML标签..." -ForegroundColor Green
+            if ($process.ExitCode -eq 0 -and (Test-Path $outputFile)) {
+                Write-Host "✅ 转换完成，正在清理格式标签..." -ForegroundColor Green
                 
-                # 清理HTML标签
+                # 清理格式标签
                 try {
                     $content = Get-Content $outputFile -Raw -Encoding UTF8
-                    $content = $content -replace '<[^>]*>', '' -replace '&amp;', '&' -replace '&lt;', '<' -replace '&gt;', '>' -replace '&quot;', '"' -replace '&nbsp;', ' '
-                    Set-Content -Path $outputFile -Value $content -Encoding UTF8
+                    $content = Clear-SubtitleText -Text $content
+                    [System.IO.File]::WriteAllText($outputFile, $content, [System.Text.Encoding]::UTF8)
                     
                     Write-Host "✅ 成功转换并清理: $($file.Name)" -ForegroundColor Green
-                    $vttSuccessCount++
+                    $subSuccessCount++
                     
                     if (-not $NoDelete) {
                         Remove-Item $file.FullName -Force
-                        Write-Host "✅ 已删除源文件: $($file.Name)" -ForegroundColor Green
+                        Write-Host "✅ 已删除源文件: $($file.Name)" -ForegroundColor Gray
                     }
                 } catch {
-                    Write-Host "❌ HTML标签清理失败: $($file.Name)" -ForegroundColor Red
+                    Write-Host "⚠️  格式标签清理失败，但文件已转换: $($file.Name)" -ForegroundColor Yellow
+                    $subSuccessCount++
                 }
             } else {
                 Write-Host "❌ 字幕转换失败: $($file.Name)" -ForegroundColor Red
@@ -661,14 +704,14 @@ if ($vttFiles.Count -gt 0) {
         Write-Host ""
     }
     
-    Write-Host "📊 VTT转换统计: 成功 $vttSuccessCount/$($vttFiles.Count) 个文件" -ForegroundColor Green
+    Write-Host "📊 字幕转换统计: 成功 $subSuccessCount/$($allSubtitleFiles.Count) 个文件" -ForegroundColor Green
 } else {
-    Write-Host "📝 未发现VTT文件，跳过字幕转换" -ForegroundColor Gray
+    Write-Host "📝 未发现需要转换的字幕文件，跳过转换" -ForegroundColor Gray
 }
 
-# 清理现有SRT文件的HTML标签
+# 清理现有SRT文件的格式标签
 Write-Host ""
-Write-Host "🧹 清理现有SRT文件中的HTML标签..." -ForegroundColor Yellow
+Write-Host "🧹 清理现有SRT文件中的格式标签..." -ForegroundColor Yellow
 $cleanedCount = 0
 $currentSrtFiles = Get-ChildItem -Filter "*.srt" -ErrorAction SilentlyContinue
 
@@ -678,10 +721,10 @@ foreach ($file in $currentSrtFiles) {
     try {
         $content = Get-Content $file.FullName -Raw -Encoding UTF8
         $originalContent = $content
-        $content = $content -replace '<[^>]*>', '' -replace '&amp;', '&' -replace '&lt;', '<' -replace '&gt;', '>' -replace '&quot;', '"' -replace '&nbsp;', ' '
+        $content = Clear-SubtitleText -Text $content
         
         if ($content -ne $originalContent) {
-            Set-Content -Path $file.FullName -Value $content -Encoding UTF8
+            [System.IO.File]::WriteAllText($file.FullName, $content, [System.Text.Encoding]::UTF8)
             Write-Host "✅ 已清理: $($file.Name)" -ForegroundColor Green
             $cleanedCount++
         } else {
@@ -718,8 +761,8 @@ Write-Host ""
 Write-Host "📋 已处理的项目:" -ForegroundColor Green
 Write-Host "  🎬 视频编码分析和分类显示" -ForegroundColor White
 Write-Host "  🔄 视频格式转换为MP4+H.264" -ForegroundColor White
-Write-Host "  📝 VTT字幕转换为SRT格式" -ForegroundColor White
-Write-Host "  🧹 HTML标签清理" -ForegroundColor White
+Write-Host "  📝 字幕格式转换为SRT (支持VTT/ASS/SSA/SUB/SBV)" -ForegroundColor White
+Write-Host "  🧹 格式标签清理 (HTML/ASS/SSA)" -ForegroundColor White
 
 Write-Host ""
 Write-Host "✨ 所有任务已完成！" -ForegroundColor Green
