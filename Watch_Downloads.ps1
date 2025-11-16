@@ -29,6 +29,81 @@ Write-Host "支持格式: TS, AVI, MKV, MOV, WMV, FLV, WEBM, MP4, VTT, ASS, SSA,
 Write-Host "按 Ctrl+C 停止监控" -ForegroundColor Yellow
 Write-Host ""
 
+# 网络目标路径
+$networkPath = "\\192.168.1.111\data\Scenes"
+
+# 定义文件处理函数
+function Process-MediaFile {
+    param(
+        [string]$FileName,
+        [string]$SourcePath,
+        [string]$DestPath
+    )
+    
+    $sourceFile = Join-Path $SourcePath $FileName
+    $destinationFile = Join-Path $DestPath $FileName
+    
+    # 转义路径中的方括号
+    $sourceFileLiteral = $sourceFile -replace '(\[|\])', '`$1'
+    $destFileLiteral = $destinationFile -replace '(\[|\])', '`$1'
+    
+    try {
+        if (-not (Test-Path $DestPath)) {
+            Write-Host "❌ 无法访问网络路径: $DestPath" -ForegroundColor Red
+            return $false
+        }
+        
+        if (Test-Path -LiteralPath $destinationFile) {
+            $sourceSize = (Get-Item -LiteralPath $sourceFile).Length
+            $destSize = (Get-Item -LiteralPath $destinationFile).Length
+            
+            if ($sourceSize -gt $destSize) {
+                Move-Item -LiteralPath $sourceFile -Destination $destinationFile -Force
+                Write-Host "  ✅ 已覆盖 (源: $([math]::Round($sourceSize/1MB,2))MB > 目标: $([math]::Round($destSize/1MB,2))MB)" -ForegroundColor Green
+                return $true
+            } else {
+                Remove-Item -LiteralPath $sourceFile -Force
+                Write-Host "  ✅ 已删除源文件 (源: $([math]::Round($sourceSize/1MB,2))MB <= 目标: $([math]::Round($destSize/1MB,2))MB)" -ForegroundColor Green
+                return $true
+            }
+        }
+        
+        Move-Item -LiteralPath $sourceFile -Destination $destinationFile -Force
+        Write-Host "  ✅ 已移动" -ForegroundColor Green
+        return $true
+    } catch {
+        Write-Host "  ❌ 处理失败: $($_.Exception.Message)" -ForegroundColor Red
+        return $false
+    }
+}
+
+# 初始化：处理已存在的 MP4 和 SRT 文件
+Write-Host "==========================================" -ForegroundColor Cyan
+Write-Host "   正在扫描已存在的文件..." -ForegroundColor Cyan
+Write-Host "==========================================" -ForegroundColor Cyan
+Write-Host ""
+
+$existingFiles = Get-ChildItem -Path $watchPath -File | Where-Object { $_.Extension -eq '.mp4' -or $_.Extension -eq '.srt' }
+if ($existingFiles.Count -gt 0) {
+    Write-Host "找到 $($existingFiles.Count) 个文件需要处理" -ForegroundColor Yellow
+    Write-Host ""
+    
+    $processedCount = 0
+    foreach ($file in $existingFiles) {
+        Write-Host "[$(Get-Date -Format 'HH:mm:ss')] 处理: $($file.Name)" -ForegroundColor Cyan
+        if (Process-MediaFile -FileName $file.Name -SourcePath $watchPath -DestPath $networkPath) {
+            $processedCount++
+        }
+    }
+    
+    Write-Host ""
+    Write-Host "初始化完成：已处理 $processedCount / $($existingFiles.Count) 个文件" -ForegroundColor Green
+    Write-Host ""
+} else {
+    Write-Host "没有找到需要处理的文件" -ForegroundColor Gray
+    Write-Host ""
+}
+
 # 创建文件监控器
 $watcher = New-Object System.IO.FileSystemWatcher
 $watcher.Path = $watchPath
@@ -38,9 +113,6 @@ $watcher.NotifyFilter = [System.IO.NotifyFilters]::FileName -bor
                         [System.IO.NotifyFilters]::LastWrite -bor
                         [System.IO.NotifyFilters]::CreationTime
 $watcher.EnableRaisingEvents = $true
-
-# 网络目标路径
-$networkPath = "\\192.168.1.111\data\Scenes"
 
 # 文件创建事件处理
 $onCreated = Register-ObjectEvent -InputObject $watcher -EventName "Created" -MessageData @{
@@ -78,26 +150,26 @@ $onCreated = Register-ObjectEvent -InputObject $watcher -EventName "Created" -Me
             }
             
             # 检查目标文件是否已存在
-            if (Test-Path $destinationFile) {
-                $sourceSize = (Get-Item $sourceFile).Length
-                $destSize = (Get-Item $destinationFile).Length
+            if (Test-Path -LiteralPath $destinationFile) {
+                $sourceSize = (Get-Item -LiteralPath $sourceFile).Length
+                $destSize = (Get-Item -LiteralPath $destinationFile).Length
                 
                 if ($sourceSize -gt $destSize) {
                     # 源文件更大，覆盖旧文件
                     Write-Host "⚠️  目标文件已存在 (源: $([math]::Round($sourceSize/1MB,2))MB > 目标: $([math]::Round($destSize/1MB,2))MB)，覆盖旧文件" -ForegroundColor Yellow
-                    Move-Item -Path $sourceFile -Destination $destinationFile -Force
+                    Move-Item -LiteralPath $sourceFile -Destination $destinationFile -Force
                     Write-Host "✅ 已覆盖到网络位置: $name" -ForegroundColor Green
                 } else {
                     # 源文件不大于旧文件，删除源文件
                     Write-Host "⚠️  目标文件已存在 (源: $([math]::Round($sourceSize/1MB,2))MB <= 目标: $([math]::Round($destSize/1MB,2))MB)，删除源文件" -ForegroundColor Yellow
-                    Remove-Item -Path $sourceFile -Force
+                    Remove-Item -LiteralPath $sourceFile -Force
                     Write-Host "✅ 已删除源文件: $name" -ForegroundColor Green
                 }
                 return
             }
             
             # 移动文件
-            Move-Item -Path $sourceFile -Destination $destinationFile -Force
+            Move-Item -LiteralPath $sourceFile -Destination $destinationFile -Force
             Write-Host "✅ 已移动到网络位置: $name" -ForegroundColor Green
         } catch {
             Write-Host "❌ 移动失败: $name - $($_.Exception.Message)" -ForegroundColor Red
