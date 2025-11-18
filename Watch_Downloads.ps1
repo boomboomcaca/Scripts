@@ -1,7 +1,7 @@
 # 文件夹监控脚本 - 监听文件夹变化并自动执行格式转换脚本
 
 # 监控配置
-$watchPath = "C:\Users\Joker\Downloads"
+$watchPath = "D:\Videos"
 
 # 检查脚本文件是否存在
 $convertScriptPath = "D:\Soft\Scripts\Convert_to_Mp4_Srt.ps1"
@@ -33,7 +33,7 @@ Write-Host ""
 $networkPath = "\\192.168.1.111\data\Scenes"
 
 # 定义文件处理函数
-function Process-MediaFile {
+function Move-MediaFile {
     param(
         [string]$FileName,
         [string]$SourcePath,
@@ -42,10 +42,6 @@ function Process-MediaFile {
     
     $sourceFile = Join-Path $SourcePath $FileName
     $destinationFile = Join-Path $DestPath $FileName
-    
-    # 转义路径中的方括号
-    $sourceFileLiteral = $sourceFile -replace '(\[|\])', '`$1'
-    $destFileLiteral = $destinationFile -replace '(\[|\])', '`$1'
     
     try {
         if (-not (Test-Path $DestPath)) {
@@ -91,7 +87,7 @@ if ($existingFiles.Count -gt 0) {
     $processedCount = 0
     foreach ($file in $existingFiles) {
         Write-Host "[$(Get-Date -Format 'HH:mm:ss')] 处理: $($file.Name)" -ForegroundColor Cyan
-        if (Process-MediaFile -FileName $file.Name -SourcePath $watchPath -DestPath $networkPath) {
+        if (Move-MediaFile -FileName $file.Name -SourcePath $watchPath -DestPath $networkPath) {
             $processedCount++
         }
     }
