@@ -2,6 +2,7 @@
 
 # 监控配置
 $watchPath = "D:\Videos"
+$pollIntervalMinutes = 5  # 轮询间隔（分钟），作为 FileSystemWatcher 的备用机制
 
 # 检查脚本文件是否存在
 $convertScriptPath = "D:\Soft\Scripts\Convert_to_Mp4_Srt.ps1"
@@ -32,7 +33,64 @@ Write-Host ""
 # 网络目标路径
 $networkPath = "\\192.168.1.111\data\Scenes"
 
+# 全局变量：跟踪上次轮询时间
+$script:lastPollTime = Get-Date
+
 # 定义文件处理函数
+function Invoke-MediaFileProcessing {
+    param(
+        [string]$WatchPath,
+        [string]$ConvertScript,
+        [string]$NetworkPath,
+        [bool]$Silent = $false
+    )
+    
+    $files = Get-ChildItem -Path $WatchPath -File -ErrorAction SilentlyContinue
+    if (-not $files) { return }
+    
+    $hasWork = $false
+    
+    foreach ($file in $files) {
+        $name = $file.Name
+        $ext = $file.Extension.ToLower()
+        
+        # 忽略临时文件
+        if ($name -match '\.(tmp|partial|!qB|crdownload)$') { continue }
+        
+        # 处理 MP4 和 SRT 文件 - 直接移动
+        if ($ext -eq '.srt' -or $ext -eq '.mp4') {
+            if (-not $Silent) {
+                Write-Host "[$(Get-Date -Format 'HH:mm:ss')] [轮询] 发现文件: $name" -ForegroundColor Cyan
+            }
+            Move-MediaFile -FileName $name -SourcePath $WatchPath -DestPath $NetworkPath
+            $hasWork = $true
+            continue
+        }
+        
+        # 处理需要转换的视频和字幕文件
+        $isVideoFile = $ext -match '^\.(ts|avi|mkv|mov|wmv|flv|webm|m4v|3gp|mpg|mpeg|ogv|asf|rm|rmvb)$'
+        $isSubtitleFile = $ext -match '^\.(vtt|ass|ssa|sub|sbv)$'
+        
+        if ($isVideoFile -or $isSubtitleFile) {
+            if (-not $Silent) {
+                Write-Host "[$(Get-Date -Format 'HH:mm:ss')] [轮询] 发现需转换文件: $name" -ForegroundColor Yellow
+            }
+            try {
+                Push-Location $WatchPath
+                & $ConvertScript -NonInteractive
+                Pop-Location
+                Write-Host "✅ 转换完成" -ForegroundColor Green
+            } catch {
+                Write-Host "❌ 错误: $_" -ForegroundColor Red
+                Pop-Location -ErrorAction SilentlyContinue
+            }
+            $hasWork = $true
+        }
+    }
+    
+    return $hasWork
+}
+
 function Move-MediaFile {
     param(
         [string]$FileName,
@@ -198,10 +256,28 @@ $onCreated = Register-ObjectEvent -InputObject $watcher -EventName "Created" -Me
 Write-Host "监控已启动，等待文件变化..." -ForegroundColor Green
 Write-Host ""
 
-# 保持脚本运行
+# 保持脚本运行，同时定期轮询作为备用
+Write-Host "轮询间隔: 每 $pollIntervalMinutes 分钟" -ForegroundColor Gray
+Write-Host ""
+
 try {
     while ($true) {
-        Start-Sleep -Seconds 1
+        Start-Sleep -Seconds 10
+        
+        # 检查是否到达轮询时间
+        $now = Get-Date
+        $elapsed = ($now - $script:lastPollTime).TotalMinutes
+        
+        if ($elapsed -ge $pollIntervalMinutes) {
+            $script:lastPollTime = $now
+            
+            # 执行轮询扫描
+            $hasWork = Invoke-MediaFileProcessing -WatchPath $watchPath -ConvertScript $convertScriptPath -NetworkPath $networkPath -Silent $false
+            
+            if (-not $hasWork) {
+                Write-Host "[$(Get-Date -Format 'HH:mm:ss')] [轮询] 无待处理文件" -ForegroundColor DarkGray
+            }
+        }
     }
 } finally {
     # 清理监控器
