@@ -18,7 +18,7 @@ Write-Host "==========================================" -ForegroundColor Cyan
 Write-Host "   文件夹监控已启动" -ForegroundColor Cyan
 Write-Host "==========================================" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "� 监控路径:" -ForegroundColor Green
+Write-Host "📂 监控路径:" -ForegroundColor Green
 Write-Host "   $watchPath" -ForegroundColor White
 Write-Host ""
 Write-Host "功能:" -ForegroundColor Cyan
@@ -403,7 +403,7 @@ try {
             $script:lastPollTime = $now
             
             # 执行轮询扫描
-            $hasWork = Invoke-MediaFileProcessing -WatchPath $watchPath -ConvertScript $convertScriptPath -NetworkPath $networkPath -Silent $false
+            $hasWork = Invoke-MediaFileProcessing -WatchPath $watchPath -ConvertScript $convertScriptPath -Silent $false
             
             if (-not $hasWork) {
                 Write-Host "[$(Get-Date -Format 'HH:mm:ss')] [轮询] 无待处理文件" -ForegroundColor DarkGray

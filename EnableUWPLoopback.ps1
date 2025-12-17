@@ -143,8 +143,9 @@ $existing = @{}
 try {
     $existingOutput = CheckNetIsolation.exe LoopbackExempt -s 2>$null
     foreach ($line in $existingOutput) {
-        if ($line -match '^\s*名称:\s*(.+)\s*$') {
-            $existing[$matches[1]] = $true
+        # 同时支持中文和英文系统
+        if ($line -match '^\s*(名称|Name):\s*(.+)\s*$') {
+            $existing[$matches[2]] = $true
         }
     }
 }
@@ -175,28 +176,16 @@ foreach ($package in $packages) {
     }
 }
 
-# 也可以直接通过 PackageFamilyName 添加
-Write-Host "`n正在通过 PackageFamilyName 批量添加..." -ForegroundColor Cyan
-
-$allPackages = $packages
-foreach ($pkg in $allPackages) {
-    if ($pkg.PackageFamilyName) {
-        if (-not $existing.ContainsKey($pkg.PackageFamilyName)) {
-            CheckNetIsolation.exe LoopbackExempt -a -n="$($pkg.PackageFamilyName)" 2>$null
-        }
-    }
-}
-
 Write-Host "`n正在清理失效的 exemption..." -ForegroundColor Cyan
 $orphanCount = 0
 try {
     $currentExemptions = CheckNetIsolation.exe LoopbackExempt -s 2>$null
-    $currentSid = ""
     
     for ($i = 0; $i -lt $currentExemptions.Count; $i++) {
         $line = $currentExemptions[$i]
         
-        if ($line -match '^\s*名称:\s*AppContainer NOT FOUND\s*$') {
+        # 同时支持中文和英文系统
+        if ($line -match '^\s*(名称|Name):\s*AppContainer NOT FOUND\s*$') {
             # 找到孤儿记录，寻找下一行的 SID
             if (($i + 1) -lt $currentExemptions.Count) {
                 $nextNode = $currentExemptions[$i + 1]
