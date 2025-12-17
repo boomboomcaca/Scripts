@@ -187,6 +187,39 @@ foreach ($pkg in $allPackages) {
     }
 }
 
+Write-Host "`n正在清理失效的 exemption..." -ForegroundColor Cyan
+$orphanCount = 0
+try {
+    $currentExemptions = CheckNetIsolation.exe LoopbackExempt -s 2>$null
+    $currentSid = ""
+    
+    for ($i = 0; $i -lt $currentExemptions.Count; $i++) {
+        $line = $currentExemptions[$i]
+        
+        if ($line -match '^\s*名称:\s*AppContainer NOT FOUND\s*$') {
+            # 找到孤儿记录，寻找下一行的 SID
+            if (($i + 1) -lt $currentExemptions.Count) {
+                $nextNode = $currentExemptions[$i + 1]
+                if ($nextNode -match '^\s*SID:\s*(S-1-15-\d+[-\d]+)\s*$') {
+                    $sidToRemove = $matches[1]
+                    Write-Host "移除失效 SID: $sidToRemove" -ForegroundColor Yellow
+                    # 使用 Start-Process 并在后台运行以减少交互干扰可能性，虽然这主要是命令行工具
+                    $proc = Start-Process CheckNetIsolation.exe -ArgumentList "LoopbackExempt -d -p=""$sidToRemove""" -NoNewWindow -PassThru -Wait
+                    $orphanCount++
+                }
+            }
+        }
+    }
+} catch {
+    Write-Host "清理过程出错: $_" -ForegroundColor Red
+}
+
+if ($orphanCount -gt 0) {
+    Write-Host "已清理 $orphanCount 个失效条目。" -ForegroundColor Green
+} else {
+    Write-Host "未发现失效条目。" -ForegroundColor DarkGray
+}
+
 Write-Host "`n完成！所有 UWP 应用已添加 loopback 豁免。" -ForegroundColor Green
 Write-Host "请重启 Clash Verge 以使更改生效。" -ForegroundColor Yellow
 
