@@ -764,63 +764,172 @@ Write-Host "  📝 字幕格式转换为SRT (支持VTT/ASS/SSA/SUB/SBV)" -Foregr
 Write-Host "  🧹 格式标签清理 (HTML/ASS/SSA)" -ForegroundColor White
 
 
-# 移动MP4和SRT文件到网络文件夹
+# 移动MP4和SRT文件到网络文件夹（带 NSFW 检测）
 Write-Host ""
-Write-Host "[7/7] 移动文件到网络文件夹..." -ForegroundColor Green
+Write-Host "[7/7] NSFW 检测并移动文件到网络文件夹..." -ForegroundColor Green
 
-$networkPath = "\\192.168.1.111\data\Scenes"
+$networkPathNSFW = "\\192.168.1.111\data\Scenes"    # NSFW 内容
+$networkPathSafe = "\\192.168.1.111\data\Movies"    # 普通内容
+$nsfwDetectScript = "D:\Soft\Scripts\nsfw_detect.py"
+
+# NSFW 检测函数
+function Test-NSFWContentLocal {
+    param([string]$VideoPath)
+    
+    Write-Host "  🔍 正在进行 NSFW 检测..." -ForegroundColor Yellow
+    
+    try {
+        $result = python $nsfwDetectScript $VideoPath 2>&1
+        $exitCode = $LASTEXITCODE
+        
+        try {
+            $jsonResult = $result | ConvertFrom-Json
+            if ($jsonResult.is_nsfw) {
+                Write-Host "  🔞 检测结果: NSFW (置信度: $($jsonResult.max_score))" -ForegroundColor Magenta
+                return $true
+            } else {
+                Write-Host "  ✅ 检测结果: 普通内容" -ForegroundColor Green
+                return $false
+            }
+        } catch {
+            if ($exitCode -eq 1) {
+                Write-Host "  🔞 检测结果: NSFW" -ForegroundColor Magenta
+                return $true
+            } else {
+                Write-Host "  ✅ 检测结果: 普通内容" -ForegroundColor Green
+                return $false
+            }
+        }
+    } catch {
+        Write-Host "  ⚠️ NSFW 检测失败，默认归类为普通内容" -ForegroundColor Yellow
+        return $false
+    }
+}
 
 # 检查网络路径是否可访问
-if (Test-Path $networkPath) {
- Write-Host " 网络路径可访问: $networkPath" -ForegroundColor Green
+$nsfwPathOK = Test-Path $networkPathNSFW
+$safePathOK = Test-Path $networkPathSafe
+
+if ($nsfwPathOK -or $safePathOK) {
+    Write-Host "  📁 NSFW 目录: $networkPathNSFW $(if($nsfwPathOK){'✅'}else{'❌'})" -ForegroundColor $(if($nsfwPathOK){'Green'}else{'Red'})
+    Write-Host "  📁 普通目录: $networkPathSafe $(if($safePathOK){'✅'}else{'❌'})" -ForegroundColor $(if($safePathOK){'Green'}else{'Red'})
     
     # 获取所有MP4和SRT文件
     $mp4FilesToMove = Get-ChildItem -Filter "*.mp4" -ErrorAction SilentlyContinue
     $srtFilesToMove = Get-ChildItem -Filter "*.srt" -ErrorAction SilentlyContinue
-    $allFilesToMove = @($mp4FilesToMove) + @($srtFilesToMove)
     
-    if ($allFilesToMove.Count -gt 0) {
- Write-Host " 找到 $($allFilesToMove.Count) 个文件需要移动 (MP4: $($mp4FilesToMove.Count), SRT: $($srtFilesToMove.Count))" -ForegroundColor White
+    if ($mp4FilesToMove.Count -gt 0 -or $srtFilesToMove.Count -gt 0) {
+        Write-Host "  📊 找到文件: MP4: $($mp4FilesToMove.Count), SRT: $($srtFilesToMove.Count)" -ForegroundColor White
         
-        $movedCount = 0
+        $movedNSFW = 0
+        $movedSafe = 0
         $skipCount = 0
         $errorCount = 0
         
-        foreach ($file in $allFilesToMove) {
-            $destinationPath = Join-Path $networkPath $file.Name
+        # 先处理 MP4 文件（进行 NSFW 检测）
+        foreach ($file in $mp4FilesToMove) {
+            Write-Host ""
+            Write-Host "  📹 处理: $($file.Name)" -ForegroundColor Cyan
+            
+            $isNSFW = Test-NSFWContentLocal -VideoPath $file.FullName
+            $destPath = if ($isNSFW) { $networkPathNSFW } else { $networkPathSafe }
+            $categoryLabel = if ($isNSFW) { "Scenes (NSFW)" } else { "Movies (普通)" }
+            
+            Write-Host "  📁 目标: $categoryLabel" -ForegroundColor Cyan
+            
+            if (-not (Test-Path $destPath)) {
+                Write-Host "  ❌ 无法访问目标路径: $destPath" -ForegroundColor Red
+                $errorCount++
+                continue
+            }
+            
+            $destinationPath = Join-Path $destPath $file.Name
             
             try {
-                # 检查目标文件是否已存在
                 if (Test-Path $destinationPath) {
-                    Write-Host "  跳过 (目标已存在): $($file.Name)" -ForegroundColor Yellow
-                    $skipCount++
+                    $sourceSize = $file.Length
+                    $destSize = (Get-Item $destinationPath).Length
+                    if ($sourceSize -gt $destSize) {
+                        Move-Item -Path $file.FullName -Destination $destinationPath -Force
+                        Write-Host "  ✅ 已覆盖 (源更大)" -ForegroundColor Green
+                        if ($isNSFW) { $movedNSFW++ } else { $movedSafe++ }
+                    } else {
+                        Remove-Item $file.FullName -Force
+                        Write-Host "  ✅ 已删除源文件 (目标更大)" -ForegroundColor Green
+                        $skipCount++
+                    }
                 } else {
-                    # 移动文件
                     Move-Item -Path $file.FullName -Destination $destinationPath -Force
-                    Write-Host " 已移动: $($file.Name)" -ForegroundColor Green
-                    $movedCount++
+                    Write-Host "  ✅ 已移动" -ForegroundColor Green
+                    if ($isNSFW) { $movedNSFW++ } else { $movedSafe++ }
                 }
             } catch {
-                Write-Host " 移动失败: $($file.Name) - $($_.Exception.Message)" -ForegroundColor Red
+                Write-Host "  ❌ 移动失败: $($_.Exception.Message)" -ForegroundColor Red
+                $errorCount++
+            }
+        }
+        
+        # 处理 SRT 文件（跟随对应的 MP4 文件）
+        foreach ($file in $srtFilesToMove) {
+            Write-Host ""
+            Write-Host "  📝 处理: $($file.Name)" -ForegroundColor Cyan
+            
+            $mp4Name = [System.IO.Path]::ChangeExtension($file.Name, ".mp4")
+            $mp4InNSFW = Join-Path $networkPathNSFW $mp4Name
+            $mp4InSafe = Join-Path $networkPathSafe $mp4Name
+            
+            if (Test-Path $mp4InNSFW) {
+                $destPath = $networkPathNSFW
+                $categoryLabel = "Scenes (跟随视频)"
+            } elseif (Test-Path $mp4InSafe) {
+                $destPath = $networkPathSafe
+                $categoryLabel = "Movies (跟随视频)"
+            } else {
+                $destPath = $networkPathSafe
+                $categoryLabel = "Movies (默认)"
+            }
+            
+            Write-Host "  📁 目标: $categoryLabel" -ForegroundColor Cyan
+            
+            if (-not (Test-Path $destPath)) {
+                Write-Host "  ❌ 无法访问目标路径: $destPath" -ForegroundColor Red
+                $errorCount++
+                continue
+            }
+            
+            $destinationPath = Join-Path $destPath $file.Name
+            
+            try {
+                if (Test-Path $destinationPath) {
+                    Write-Host "  ⏭️ 跳过 (目标已存在)" -ForegroundColor Yellow
+                    $skipCount++
+                } else {
+                    Move-Item -Path $file.FullName -Destination $destinationPath -Force
+                    Write-Host "  ✅ 已移动" -ForegroundColor Green
+                    if ($destPath -eq $networkPathNSFW) { $movedNSFW++ } else { $movedSafe++ }
+                }
+            } catch {
+                Write-Host "  ❌ 移动失败: $($_.Exception.Message)" -ForegroundColor Red
                 $errorCount++
             }
         }
         
         Write-Host ""
-        Write-Host " 文件移动统计:" -ForegroundColor Green
-        Write-Host "   成功移动: $movedCount 个文件" -ForegroundColor Green
+        Write-Host "  📊 文件移动统计:" -ForegroundColor Green
+        Write-Host "    🔞 移动到 Scenes (NSFW): $movedNSFW 个文件" -ForegroundColor Magenta
+        Write-Host "    📁 移动到 Movies (普通): $movedSafe 个文件" -ForegroundColor Green
         if ($skipCount -gt 0) {
-            Write-Host "    跳过: $skipCount 个文件" -ForegroundColor Yellow
+            Write-Host "    ⏭️ 跳过: $skipCount 个文件" -ForegroundColor Yellow
         }
         if ($errorCount -gt 0) {
-            Write-Host "   失败: $errorCount 个文件" -ForegroundColor Red
+            Write-Host "    ❌ 失败: $errorCount 个文件" -ForegroundColor Red
         }
     } else {
         Write-Host "  未找到需要移动的MP4或SRT文件" -ForegroundColor Yellow
     }
 } else {
-    Write-Host " 无法访问网络路径: $networkPath" -ForegroundColor Red
-    Write-Host "   请确认网络连接和路径权限" -ForegroundColor Yellow
+    Write-Host "  ❌ 无法访问任何网络路径" -ForegroundColor Red
+    Write-Host "    请确认网络连接和路径权限" -ForegroundColor Yellow
 }
 Write-Host ""
 Write-Host "✨ 所有任务已完成！" -ForegroundColor Green
