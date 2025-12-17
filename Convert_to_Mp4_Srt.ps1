@@ -560,6 +560,7 @@ if ($nonMp4H264Files.Count -gt 0) {
                 "-preset", "fast",
                 "-crf", "23",
                 "-c:a", "aac",
+                "-af", "loudnorm=I=-16:TP=-1.5:LRA=11",
                 "-map_metadata", "0",
                 "-y",
                 "`"$outputFile`""
