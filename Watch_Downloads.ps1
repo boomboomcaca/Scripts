@@ -37,6 +37,80 @@ $networkPathNSFW = "\\192.168.1.111\data\Scenes"    # NSFW 内容
 $networkPathSafe = "\\192.168.1.111\data\Movies"    # 普通内容
 $nsfwDetectScript = "D:\Soft\Scripts\nsfw_detect.py"
 
+# 磁盘空间检查配置
+$linuxHost = "192.168.1.111"
+$linuxDataPath = "/mnt/data"
+$minimumFreeSpaceGB = 10  # 最小保留空间 (GB)
+
+# Windows 通知函数
+function Send-ToastNotification {
+    param(
+        [string]$Title,
+        [string]$Message,
+        [string]$Type = "Warning"  # Warning, Error, Info
+    )
+    
+    try {
+        [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null
+        [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] | Out-Null
+        
+        $template = @"
+<toast>
+    <visual>
+        <binding template="ToastText02">
+            <text id="1">$Title</text>
+            <text id="2">$Message</text>
+        </binding>
+    </visual>
+    <audio src="ms-winsoundevent:Notification.Default"/>
+</toast>
+"@
+        
+        $xml = New-Object Windows.Data.Xml.Dom.XmlDocument
+        $xml.LoadXml($template)
+        $toast = New-Object Windows.UI.Notifications.ToastNotification $xml
+        [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier("Watch_Downloads").Show($toast)
+    } catch {
+        # 通知失败时使用系统气泡
+        Add-Type -AssemblyName System.Windows.Forms
+        $balloon = New-Object System.Windows.Forms.NotifyIcon
+        $balloon.Icon = [System.Drawing.SystemIcons]::Warning
+        $balloon.BalloonTipIcon = $Type
+        $balloon.BalloonTipTitle = $Title
+        $balloon.BalloonTipText = $Message
+        $balloon.Visible = $true
+        $balloon.ShowBalloonTip(10000)
+        Start-Sleep -Seconds 1
+        $balloon.Dispose()
+    }
+}
+
+# 检查 Linux 目标磁盘剩余空间
+function Test-LinuxDiskSpace {
+    param(
+        [long]$RequiredBytes = 0
+    )
+    
+    try {
+        $result = ssh root@$linuxHost "df -B1 $linuxDataPath | tail -1 | awk '{print \$4}'"
+        $availableBytes = [long]$result
+        $availableGB = [math]::Round($availableBytes / 1GB, 2)
+        $requiredGB = [math]::Round($RequiredBytes / 1GB, 2)
+        $minRequired = ($minimumFreeSpaceGB * 1GB) + $RequiredBytes
+        
+        if ($availableBytes -lt $minRequired) {
+            $msg = "Linux 磁盘空间不足! 剩余: ${availableGB}GB"
+            Write-Host "  ⚠️ $msg" -ForegroundColor Red
+            Send-ToastNotification -Title "磁盘空间警告" -Message $msg -Type "Warning"
+            return $false
+        }
+        return $true
+    } catch {
+        Write-Host "  ⚠️ 无法检查 Linux 磁盘空间: $($_.Exception.Message)" -ForegroundColor Yellow
+        return $true  # 检查失败时默认允许继续
+    }
+}
+
 # 全局变量：跟踪上次轮询时间
 $script:lastPollTime = Get-Date
 
@@ -124,6 +198,13 @@ function Move-MediaFile {
                 Write-Host "  ✅ 已删除源文件 (源: $([math]::Round($sourceSize/1MB,2))MB <= 目标: $([math]::Round($destSize/1MB,2))MB)" -ForegroundColor Green
                 return $true
             }
+        }
+        
+        # 检查 Linux 磁盘空间
+        $fileSize = (Get-Item -LiteralPath $sourceFile).Length
+        if (-not (Test-LinuxDiskSpace -RequiredBytes $fileSize)) {
+            Write-Host "  ⏸️ 跳过移动，等待磁盘空间释放" -ForegroundColor Yellow
+            return $false
         }
         
         Move-Item -LiteralPath $sourceFile -Destination $destinationFile -Force
