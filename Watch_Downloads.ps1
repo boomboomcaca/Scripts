@@ -41,6 +41,7 @@ $nsfwDetectScript = "D:\Soft\Scripts\nsfw_detect.py"
 $linuxHost = "192.168.1.111"
 $linuxDataPath = "/mnt/data"
 $minimumFreeSpaceGB = 10  # 最小保留空间 (GB)
+$script:diskSpaceWarningShown = $false  # 磁盘空间警告是否已显示
 
 # Windows 通知函数
 function Send-ToastNotification {
@@ -92,7 +93,7 @@ function Test-LinuxDiskSpace {
     )
     
     try {
-        $result = ssh root@$linuxHost "df -B1 $linuxDataPath | tail -1 | awk '{print \$4}'"
+        $result = ssh root@$linuxHost "df -B1 $linuxDataPath | tail -1 | awk '{print `$4}'"
         $availableBytes = [long]$result
         $availableGB = [math]::Round($availableBytes / 1GB, 2)
         $requiredGB = [math]::Round($RequiredBytes / 1GB, 2)
@@ -101,8 +102,17 @@ function Test-LinuxDiskSpace {
         if ($availableBytes -lt $minRequired) {
             $msg = "Linux 磁盘空间不足! 剩余: ${availableGB}GB"
             Write-Host "  ⚠️ $msg" -ForegroundColor Red
-            Send-ToastNotification -Title "磁盘空间警告" -Message $msg -Type "Warning"
+            # 只在首次发现空间不足时弹出通知
+            if (-not $script:diskSpaceWarningShown) {
+                Send-ToastNotification -Title "磁盘空间警告" -Message $msg -Type "Warning"
+                $script:diskSpaceWarningShown = $true
+            }
             return $false
+        }
+        # 空间恢复正常时重置标记，下次空间不足时可以再次通知
+        if ($script:diskSpaceWarningShown) {
+            $script:diskSpaceWarningShown = $false
+            Write-Host "  ✅ Linux 磁盘空间已恢复: ${availableGB}GB" -ForegroundColor Green
         }
         return $true
     } catch {
