@@ -45,7 +45,7 @@ GPU加速视频转换 + 字幕清理 + 编码分析工具
     💎 无损编码 (MJPEG, HuffYUV, FFV1) - 特殊处理
 
 支持的视频格式:
-    TS、AVI、MKV、MOV、WMV、FLV、WEBM、M4V、3GP、MPG、MPEG、OGV、ASF、RM、RMVB
+    TS、AVI、MKV、MOV、WMV、FLV、WEBM、M4V、3GP、MPG、MPEG、OGV、ASF、RM、RMVB、M3U8
 
 示例:
     .\Convert_to_Mp4_Srt.ps1                        # 分析并转换当前目录
@@ -367,7 +367,7 @@ try {
 }
 
 # 定义支持的视频文件格式
-$VideoExtensions = @("*.mp4", "*.ts", "*.avi", "*.mkv", "*.mov", "*.wmv", "*.flv", "*.webm", "*.m4v", "*.3gp", "*.mpg", "*.mpeg", "*.ogv", "*.asf", "*.rm", "*.rmvb")
+$VideoExtensions = @("*.mp4", "*.ts", "*.avi", "*.mkv", "*.mov", "*.wmv", "*.flv", "*.webm", "*.m4v", "*.3gp", "*.mpg", "*.mpeg", "*.ogv", "*.asf", "*.rm", "*.rmvb", "*.m3u8")
 
 # 获取所有视频文件
 Write-Host ""
@@ -553,23 +553,37 @@ if ($nonMp4H264Files.Count -gt 0) {
         
         try {
             # 根据文件格式选择不同的转换参数
-            $ffmpegArgs = @(
-                "-hwaccel", "cuda",
-                "-i", "`"$($file.FullName)`"",
-                "-c:v", "h264_nvenc",
-                "-preset", "fast",
-                "-crf", "23",
-                "-c:a", "aac",
-                "-ar", "48000",
-                "-af", "loudnorm=I=-16:TP=-1.5:LRA=11",
-                "-map_metadata", "0",
-                "-y",
-                "`"$outputFile`""
-            )
-            
-            # 对于某些格式，可能需要使用软件解码
-            if ($file.Extension -in @('.rm', '.rmvb', '.asf')) {
-                $ffmpegArgs[1] = "auto"  # 不强制使用CUDA硬件加速解码
+            if ($file.Extension -eq '.m3u8') {
+                # M3U8 (HLS) 流专用参数 - 优先尝试复制流避免重新编码
+                $ffmpegArgs = @(
+                    "-i", "`"$($file.FullName)`"",
+                    "-c", "copy",
+                    "-bsf:a", "aac_adtstoasc",
+                    "-y",
+                    "`"$outputFile`""
+                )
+                
+                Write-Host "  📺 使用HLS流复制模式..." -ForegroundColor Cyan
+            } else {
+                # 普通视频文件使用GPU加速转换
+                $ffmpegArgs = @(
+                    "-hwaccel", "cuda",
+                    "-i", "`"$($file.FullName)`"",
+                    "-c:v", "h264_nvenc",
+                    "-preset", "fast",
+                    "-crf", "23",
+                    "-c:a", "aac",
+                    "-ar", "48000",
+                    "-af", "loudnorm=I=-16:TP=-1.5:LRA=11",
+                    "-map_metadata", "0",
+                    "-y",
+                    "`"$outputFile`""
+                )
+                
+                # 对于某些格式，可能需要使用软件解码
+                if ($file.Extension -in @('.rm', '.rmvb', '.asf')) {
+                    $ffmpegArgs[1] = "auto"  # 不强制使用CUDA硬件加速解码
+                }
             }
             
             $process = Start-Process -FilePath "ffmpeg" -ArgumentList $ffmpegArgs -Wait -PassThru -NoNewWindow
