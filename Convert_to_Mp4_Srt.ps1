@@ -785,7 +785,7 @@ Write-Host "[7/7] NSFW 检测并移动文件到网络文件夹..." -ForegroundCo
 
 $networkPathNSFW = "\\192.168.1.111\data\Scenes"    # NSFW 内容
 $networkPathSafe = "\\192.168.1.111\data\Movies"    # 普通内容
-$nsfwDetectScript = "D:\Soft\Scripts\nsfw_detect.py"
+$nsfwDetectScript = Join-Path $PSScriptRoot "nsfw_detect.py"
 
 # NSFW 检测函数
 function Test-NSFWContentLocal {

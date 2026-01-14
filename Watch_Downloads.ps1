@@ -50,7 +50,7 @@ $startupMaxRetries = 30   # 开机启动最大重试次数
 $startupRetryInterval = 10  # 重试间隔（秒）
 
 # 检查脚本文件是否存在
-$convertScriptPath = "D:\Soft\Scripts\Convert_to_Mp4_Srt.ps1"
+$convertScriptPath = Join-Path $PSScriptRoot "Convert_to_Mp4_Srt.ps1"
 
 if (Test-Path $convertScriptPath) {
     Write-Host "✅ 找到转换脚本: $convertScriptPath" -ForegroundColor Green
@@ -107,7 +107,7 @@ Write-Host "按 Ctrl+C 停止监控" -ForegroundColor Yellow
 Write-Host ""
 
 # NSFW 检测脚本路径
-$nsfwDetectScript = "D:\Soft\Scripts\nsfw_detect.py"
+$nsfwDetectScript = Join-Path $PSScriptRoot "nsfw_detect.py"
 
 # 磁盘空间检查配置
 $linuxHost = "192.168.1.111"
