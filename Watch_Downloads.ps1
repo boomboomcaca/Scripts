@@ -1,49 +1,6 @@
 # 文件夹监控脚本 - 监听文件夹变化并自动执行格式转换脚本
 
-# 监控配置
-$watchPath = "D:\Videos"
-$pollIntervalMinutes = 5  # 轮询间隔（分钟），作为 FileSystemWatcher 的备用机制
-
-# 检查脚本文件是否存在
-$convertScriptPath = "D:\Soft\Scripts\Convert_to_Mp4_Srt.ps1"
-
-if (Test-Path $convertScriptPath) {
-    Write-Host "✅ 找到转换脚本: $convertScriptPath" -ForegroundColor Green
-} else {
-    Write-Host "❌ 错误: 未找到 Convert_to_Mp4_Srt.ps1" -ForegroundColor Red
-    exit 1
-}
-
-Write-Host "==========================================" -ForegroundColor Cyan
-Write-Host "   文件夹监控已启动" -ForegroundColor Cyan
-Write-Host "==========================================" -ForegroundColor Cyan
-Write-Host ""
-Write-Host "📂 监控路径:" -ForegroundColor Green
-Write-Host "   $watchPath" -ForegroundColor White
-Write-Host ""
-Write-Host "功能:" -ForegroundColor Cyan
-Write-Host "   • 视频格式转换 (MP4+H.264)" -ForegroundColor Gray
-Write-Host "   • 字幕格式转换 (VTT/ASS/SSA/SUB → SRT)" -ForegroundColor Gray
-Write-Host "   • NSFW 内容检测和自动分类" -ForegroundColor Gray
-Write-Host "   • NSFW → \\192.168.1.111\data\Scenes" -ForegroundColor Gray
-Write-Host "   • 普通 → \\192.168.1.111\data\Movies" -ForegroundColor Gray
-Write-Host ""
-Write-Host "支持格式: TS, AVI, MKV, MOV, WMV, FLV, WEBM, MP4, VTT, ASS, SSA, SUB, SRT等" -ForegroundColor Gray
-Write-Host "按 Ctrl+C 停止监控" -ForegroundColor Yellow
-Write-Host ""
-
-# 网络目标路径
-$networkPathNSFW = "\\192.168.1.111\data\Scenes"    # NSFW 内容
-$networkPathSafe = "\\192.168.1.111\data\Movies"    # 普通内容
-$nsfwDetectScript = "D:\Soft\Scripts\nsfw_detect.py"
-
-# 磁盘空间检查配置
-$linuxHost = "192.168.1.111"
-$linuxDataPath = "/mnt/data"
-$minimumFreeSpaceGB = 10  # 最小保留空间 (GB)
-$script:diskSpaceWarningShown = $false  # 磁盘空间警告是否已显示
-
-# Windows 通知函数
+# Windows 通知函数（需要在启动检查前定义）
 function Send-ToastNotification {
     param(
         [string]$Title,
@@ -86,6 +43,78 @@ function Send-ToastNotification {
     }
 }
 
+# 监控配置
+$watchPath = "D:\Videos"
+$pollIntervalMinutes = 5  # 轮询间隔（分钟），作为 FileSystemWatcher 的备用机制
+$startupMaxRetries = 30   # 开机启动最大重试次数
+$startupRetryInterval = 10  # 重试间隔（秒）
+
+# 检查脚本文件是否存在
+$convertScriptPath = "D:\Soft\Scripts\Convert_to_Mp4_Srt.ps1"
+
+if (Test-Path $convertScriptPath) {
+    Write-Host "✅ 找到转换脚本: $convertScriptPath" -ForegroundColor Green
+} else {
+    Write-Host "❌ 错误: 未找到 Convert_to_Mp4_Srt.ps1" -ForegroundColor Red
+    Send-ToastNotification -Title "监控脚本启动失败" -Message "未找到 Convert_to_Mp4_Srt.ps1" -Type "Error"
+    exit 1
+}
+
+# 等待监控路径就绪（开机时可能需要等待）
+$retryCount = 0
+while (-not (Test-Path $watchPath)) {
+    $retryCount++
+    if ($retryCount -gt $startupMaxRetries) {
+        Write-Host "❌ 错误: 监控路径 $watchPath 不存在，已超时退出" -ForegroundColor Red
+        Send-ToastNotification -Title "监控脚本启动失败" -Message "监控路径 $watchPath 不存在，等待超时" -Type "Error"
+        exit 1
+    }
+    Write-Host "⏳ 等待监控路径就绪... ($retryCount/$startupMaxRetries)" -ForegroundColor Yellow
+    Start-Sleep -Seconds $startupRetryInterval
+}
+
+# 等待网络路径就绪
+$networkPathNSFW = "\\192.168.1.111\data\Scenes"
+$networkPathSafe = "\\192.168.1.111\data\Movies"
+
+$retryCount = 0
+while (-not (Test-Path $networkPathNSFW) -or -not (Test-Path $networkPathSafe)) {
+    $retryCount++
+    if ($retryCount -gt $startupMaxRetries) {
+        Write-Host "⚠️ 警告: 网络路径不可用，将以离线模式运行" -ForegroundColor Yellow
+        break
+    }
+    Write-Host "⏳ 等待网络路径就绪... ($retryCount/$startupMaxRetries)" -ForegroundColor Yellow
+    Start-Sleep -Seconds $startupRetryInterval
+}
+
+Write-Host "==========================================" -ForegroundColor Cyan
+Write-Host "   文件夹监控已启动" -ForegroundColor Cyan
+Write-Host "==========================================" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "📂 监控路径:" -ForegroundColor Green
+Write-Host "   $watchPath" -ForegroundColor White
+Write-Host ""
+Write-Host "功能:" -ForegroundColor Cyan
+Write-Host "   • 视频格式转换 (MP4+H.264)" -ForegroundColor Gray
+Write-Host "   • 字幕格式转换 (VTT/ASS/SSA/SUB → SRT)" -ForegroundColor Gray
+Write-Host "   • NSFW 内容检测和自动分类" -ForegroundColor Gray
+Write-Host "   • NSFW → \\192.168.1.111\data\Scenes" -ForegroundColor Gray
+Write-Host "   • 普通 → \\192.168.1.111\data\Movies" -ForegroundColor Gray
+Write-Host ""
+Write-Host "支持格式: TS, AVI, MKV, MOV, WMV, FLV, WEBM, MP4, VTT, ASS, SSA, SUB, SRT等" -ForegroundColor Gray
+Write-Host "按 Ctrl+C 停止监控" -ForegroundColor Yellow
+Write-Host ""
+
+# NSFW 检测脚本路径
+$nsfwDetectScript = "D:\Soft\Scripts\nsfw_detect.py"
+
+# 磁盘空间检查配置
+$linuxHost = "192.168.1.111"
+$linuxDataPath = "/mnt/data"
+$minimumFreeSpaceGB = 10  # 最小保留空间 (GB)
+$script:diskSpaceWarningShown = $false  # 磁盘空间警告是否已显示
+
 # 检查 Linux 目标磁盘剩余空间
 function Test-LinuxDiskSpace {
     param(
@@ -96,7 +125,6 @@ function Test-LinuxDiskSpace {
         $result = ssh root@$linuxHost "df -B1 $linuxDataPath | tail -1 | awk '{print `$4}'"
         $availableBytes = [long]$result
         $availableGB = [math]::Round($availableBytes / 1GB, 2)
-        $requiredGB = [math]::Round($RequiredBytes / 1GB, 2)
         $minRequired = ($minimumFreeSpaceGB * 1GB) + $RequiredBytes
         
         if ($availableBytes -lt $minRequired) {
@@ -304,31 +332,63 @@ function Move-MediaFileWithNSFWDetection {
     return Move-MediaFile -FileName $FileName -SourcePath $SourcePath -DestPath $destPath
 }
 
-# 初始化：处理已存在的 MP4 和 SRT 文件
+# 初始化：处理已存在的文件
 Write-Host "==========================================" -ForegroundColor Cyan
 Write-Host "   正在扫描已存在的文件..." -ForegroundColor Cyan
 Write-Host "==========================================" -ForegroundColor Cyan
 Write-Host ""
 
-$existingFiles = Get-ChildItem -Path $watchPath -File | Where-Object { $_.Extension -eq '.mp4' -or $_.Extension -eq '.srt' }
+# 先处理待转换的视频和字幕文件（TS, VTT 等）
+$convertExtensions = @('.ts', '.avi', '.mkv', '.mov', '.wmv', '.flv', '.webm', '.m4v', '.3gp', '.mpg', '.mpeg', '.ogv', '.asf', '.rm', '.rmvb', '.vtt', '.ass', '.ssa', '.sub', '.sbv')
+$filesToConvert = Get-ChildItem -Path $watchPath -File -ErrorAction SilentlyContinue | Where-Object { $convertExtensions -contains $_.Extension.ToLower() }
+
+if ($filesToConvert.Count -gt 0) {
+    Write-Host "找到 $($filesToConvert.Count) 个文件需要转换" -ForegroundColor Yellow
+    Write-Host ""
+    
+    try {
+        Push-Location $watchPath
+        & $convertScriptPath -NonInteractive
+        Pop-Location
+        Write-Host "✅ 转换完成" -ForegroundColor Green
+    } catch {
+        Write-Host "❌ 转换错误: $_" -ForegroundColor Red
+        Pop-Location -ErrorAction SilentlyContinue
+    }
+    Write-Host ""
+}
+
+# 处理已存在的 MP4 和 SRT 文件（移动到网络目录）
+$existingFiles = Get-ChildItem -Path $watchPath -File -ErrorAction SilentlyContinue | Where-Object { $_.Extension -eq '.mp4' -or $_.Extension -eq '.srt' }
 if ($existingFiles.Count -gt 0) {
-    Write-Host "找到 $($existingFiles.Count) 个文件需要处理" -ForegroundColor Yellow
+    Write-Host "找到 $($existingFiles.Count) 个 MP4/SRT 文件需要移动" -ForegroundColor Yellow
     Write-Host ""
     
     $processedCount = 0
+    $errorCount = 0
     foreach ($file in $existingFiles) {
-        Write-Host "[$(Get-Date -Format 'HH:mm:ss')] 处理: $($file.Name)" -ForegroundColor Cyan
-        if (Move-MediaFileWithNSFWDetection -FileName $file.Name -SourcePath $watchPath) {
-            $processedCount++
+        try {
+            Write-Host "[$(Get-Date -Format 'HH:mm:ss')] 处理: $($file.Name)" -ForegroundColor Cyan
+            if (Move-MediaFileWithNSFWDetection -FileName $file.Name -SourcePath $watchPath) {
+                $processedCount++
+            }
+        } catch {
+            Write-Host "  ❌ 处理失败: $($_.Exception.Message)" -ForegroundColor Red
+            $errorCount++
         }
     }
     
     Write-Host ""
     Write-Host "初始化完成：已处理 $processedCount / $($existingFiles.Count) 个文件" -ForegroundColor Green
+    if ($errorCount -gt 0) {
+        Write-Host "  ⚠️ 失败: $errorCount 个文件" -ForegroundColor Yellow
+    }
     Write-Host ""
 } else {
-    Write-Host "没有找到需要处理的文件" -ForegroundColor Gray
-    Write-Host ""
+    if ($filesToConvert.Count -eq 0) {
+        Write-Host "没有找到需要处理的文件" -ForegroundColor Gray
+        Write-Host ""
+    }
 }
 
 # 创建文件监控器
