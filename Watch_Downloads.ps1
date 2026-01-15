@@ -28,6 +28,7 @@ function Send-ToastNotification {
         $xml.LoadXml($template)
         $toast = New-Object Windows.UI.Notifications.ToastNotification $xml
         [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier("Watch_Downloads").Show($toast)
+        return  # Toast 成功，直接返回
     } catch {
         # 通知失败时使用系统气泡
         Add-Type -AssemblyName System.Windows.Forms
@@ -538,6 +539,9 @@ $onCreated = Register-ObjectEvent -InputObject $watcher -EventName "Created" -Me
 Write-Host "监控已启动，等待文件变化..." -ForegroundColor Green
 Write-Host ""
 
+# 发送启动成功通知
+Send-ToastNotification -Title "监控脚本已启动" -Message "正在监控 $watchPath" -Type "Info"
+
 # 保持脚本运行，同时定期轮询作为备用
 Write-Host "轮询间隔: 每 $pollIntervalMinutes 分钟" -ForegroundColor Gray
 Write-Host ""
@@ -568,4 +572,7 @@ try {
     Unregister-Event -SourceIdentifier $onCreated.Name -ErrorAction SilentlyContinue
     
     Write-Host "`n监控已停止" -ForegroundColor Yellow
+    
+    # 发送退出通知
+    Send-ToastNotification -Title "监控脚本已退出" -Message "文件夹监控已停止运行" -Type "Warning"
 }
