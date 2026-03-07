@@ -374,7 +374,7 @@ Write-Host ""
 Write-Host "[2/6] 扫描视频文件..." -ForegroundColor Green
 $allVideoFiles = @()
 foreach ($ext in $VideoExtensions) {
-    $files = Get-ChildItem -Filter $ext -ErrorAction SilentlyContinue | Where-Object { 
+    $files = Get-ChildItem -Path "." -Filter $ext -Recurse -ErrorAction SilentlyContinue | Where-Object { 
         # 排除临时文件
         $_.Name -notmatch "\.temp\." -and $_.Name -notmatch "\.tmp\."
     }
@@ -384,12 +384,12 @@ foreach ($ext in $VideoExtensions) {
 }
 
 # 统计字幕文件
-$vttFiles = Get-ChildItem -Filter "*.vtt" -ErrorAction SilentlyContinue
-$assFiles = Get-ChildItem -Filter "*.ass" -ErrorAction SilentlyContinue
-$ssaFiles = Get-ChildItem -Filter "*.ssa" -ErrorAction SilentlyContinue
-$subFiles = Get-ChildItem -Filter "*.sub" -ErrorAction SilentlyContinue
-$sbvFiles = Get-ChildItem -Filter "*.sbv" -ErrorAction SilentlyContinue
-$srtFiles = Get-ChildItem -Filter "*.srt" -ErrorAction SilentlyContinue
+$vttFiles = Get-ChildItem -Filter "*.vtt" -Recurse -ErrorAction SilentlyContinue
+$assFiles = Get-ChildItem -Filter "*.ass" -Recurse -ErrorAction SilentlyContinue
+$ssaFiles = Get-ChildItem -Filter "*.ssa" -Recurse -ErrorAction SilentlyContinue
+$subFiles = Get-ChildItem -Filter "*.sub" -Recurse -ErrorAction SilentlyContinue
+$sbvFiles = Get-ChildItem -Filter "*.sbv" -Recurse -ErrorAction SilentlyContinue
+$srtFiles = Get-ChildItem -Filter "*.srt" -Recurse -ErrorAction SilentlyContinue
 $totalSubFiles = $vttFiles.Count + $assFiles.Count + $ssaFiles.Count + $subFiles.Count + $sbvFiles.Count
 
 if ($allVideoFiles.Count -eq 0) {
@@ -727,7 +727,7 @@ if ($allSubtitleFiles.Count -gt 0) {
 Write-Host ""
 Write-Host "🧹 清理现有SRT文件中的格式标签..." -ForegroundColor Yellow
 $cleanedCount = 0
-$currentSrtFiles = Get-ChildItem -Filter "*.srt" -ErrorAction SilentlyContinue
+$currentSrtFiles = Get-ChildItem -Filter "*.srt" -Recurse -ErrorAction SilentlyContinue
 
 foreach ($file in $currentSrtFiles) {
     Write-Host "🔍 检查: $($file.Name)" -ForegroundColor White
@@ -760,8 +760,8 @@ Write-Host "==========================================" -ForegroundColor Cyan
 Write-Host ""
 
 Write-Host "🎉 最终结果统计:" -ForegroundColor Green
-$finalMp4Files = Get-ChildItem -Filter "*.mp4" -ErrorAction SilentlyContinue
-$finalSrtFiles = Get-ChildItem -Filter "*.srt" -ErrorAction SilentlyContinue
+$finalMp4Files = Get-ChildItem -Filter "*.mp4" -Recurse -ErrorAction SilentlyContinue
+$finalSrtFiles = Get-ChildItem -Filter "*.srt" -Recurse -ErrorAction SilentlyContinue
 
 Write-Host "  📹 MP4+H.264编码文件: $($finalMp4Files.Count) 个" -ForegroundColor White
 Write-Host "  📝 SRT字幕文件: $($finalSrtFiles.Count) 个" -ForegroundColor White

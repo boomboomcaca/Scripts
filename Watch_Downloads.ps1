@@ -165,7 +165,7 @@ function Invoke-MediaFileProcessing {
         [bool]$Silent = $false
     )
     
-    $files = Get-ChildItem -Path $WatchPath -File -ErrorAction SilentlyContinue
+    $files = Get-ChildItem -Path $WatchPath -File -Recurse -ErrorAction SilentlyContinue
     if (-not $files) { return $false }
     
     $hasWork = $false
@@ -179,32 +179,29 @@ function Invoke-MediaFileProcessing {
         if ($name -match '\.(tmp|partial|!qB|crdownload)$') { continue }
         
         # 检查文件是否被占用 (锁定)
-        $isLocked = $true
         try {
             $fs = [System.IO.File]::Open($file.FullName, [System.IO.FileMode]::Open, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
             $fs.Close()
             $fs.Dispose()
-            $isLocked = $false
         }
         catch {
             # 文件被锁定，这轮跳过处理
             continue
         }
         
-        # 处理 MP4 和 SRT 文件 - 进行 NSFW 检测后移动
         if ($ext -eq '.srt' -or $ext -eq '.mp4') {
             # 对于 SRT 文件，如果对应的 MP4 还在这（可能还没转换完或没有传完），先不动（避免竞态）
             if ($ext -eq '.srt') {
                 $mp4Name = [System.IO.Path]::ChangeExtension($name, ".mp4")
-                if (Test-Path (Join-Path $WatchPath $mp4Name)) {
+                if (Test-Path (Join-Path $file.DirectoryName $mp4Name)) {
                     continue
                 }
             }
             
             if (-not $Silent) {
-                Write-Host "[$(Get-Date -Format 'HH:mm:ss')] [处理] 发现文件: $name" -ForegroundColor Cyan
+                Write-Host "[$(Get-Date -Format 'HH:mm:ss')] [处理] 发现文件: $name ($($file.DirectoryName))" -ForegroundColor Cyan
             }
-            if (Move-MediaFileWithNSFWDetection -FileName $name -SourcePath $WatchPath) {
+            if (Move-MediaFileWithNSFWDetection -FileName $name -SourcePath $file.DirectoryName) {
                 $hasWork = $true
             }
             continue
@@ -385,7 +382,7 @@ Write-Host ""
 
 # 先处理待转换的视频和字幕文件（TS, VTT 等）
 $convertExtensions = @('.ts', '.avi', '.mkv', '.mov', '.wmv', '.flv', '.webm', '.m4v', '.3gp', '.mpg', '.mpeg', '.ogv', '.asf', '.rm', '.rmvb', '.vtt', '.ass', '.ssa', '.sub', '.sbv')
-$filesToConvert = Get-ChildItem -Path $watchPath -File -ErrorAction SilentlyContinue | Where-Object { $convertExtensions -contains $_.Extension.ToLower() }
+$filesToConvert = Get-ChildItem -Path $watchPath -File -Recurse -ErrorAction SilentlyContinue | Where-Object { $convertExtensions -contains $_.Extension.ToLower() }
 
 if ($filesToConvert.Count -gt 0) {
     Write-Host "找到 $($filesToConvert.Count) 个文件需要转换" -ForegroundColor Yellow
@@ -405,7 +402,7 @@ if ($filesToConvert.Count -gt 0) {
 }
 
 # 处理已存在的 MP4 和 SRT 文件（移动到网络目录）
-$existingFiles = Get-ChildItem -Path $watchPath -File -ErrorAction SilentlyContinue | Where-Object { $_.Extension -eq '.mp4' -or $_.Extension -eq '.srt' }
+$existingFiles = Get-ChildItem -Path $watchPath -File -Recurse -ErrorAction SilentlyContinue | Where-Object { $_.Extension -eq '.mp4' -or $_.Extension -eq '.srt' }
 if ($existingFiles.Count -gt 0) {
     Write-Host "找到 $($existingFiles.Count) 个 MP4/SRT 文件需要移动" -ForegroundColor Yellow
     Write-Host ""
@@ -415,7 +412,7 @@ if ($existingFiles.Count -gt 0) {
     foreach ($file in $existingFiles) {
         try {
             Write-Host "[$(Get-Date -Format 'HH:mm:ss')] 处理: $($file.Name)" -ForegroundColor Cyan
-            if (Move-MediaFileWithNSFWDetection -FileName $file.Name -SourcePath $watchPath) {
+            if (Move-MediaFileWithNSFWDetection -FileName $file.Name -SourcePath $file.DirectoryName) {
                 $processedCount++
             }
         }
@@ -443,7 +440,7 @@ else {
 $watcher = New-Object System.IO.FileSystemWatcher
 $watcher.Path = $watchPath
 $watcher.Filter = "*.*"
-$watcher.IncludeSubdirectories = $false
+$watcher.IncludeSubdirectories = $true
 $watcher.NotifyFilter = [System.IO.NotifyFilters]::FileName -bor 
 [System.IO.NotifyFilters]::LastWrite -bor
 [System.IO.NotifyFilters]::CreationTime
