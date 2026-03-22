@@ -1,4 +1,4 @@
-﻿# GPU加速视频转换 + 字幕清理 + 编码分析工具
+# GPU加速视频转换 + 字幕清理 + 编码分析工具
 
 param(
     [string]$Path = ".",
@@ -565,24 +565,54 @@ if ($nonMp4H264Files.Count -gt 0) {
                 
                 Write-Host "  📺 使用HLS流复制模式..." -ForegroundColor Cyan
             } else {
-                # 普通视频文件使用GPU加速转换
-                $ffmpegArgs = @(
-                    "-hwaccel", "cuda",
-                    "-i", "`"$($file.FullName)`"",
-                    "-c:v", "h264_nvenc",
-                    "-preset", "fast",
-                    "-crf", "23",
-                    "-c:a", "aac",
-                    "-ar", "48000",
-                    "-af", "loudnorm=I=-16:TP=-1.5:LRA=11",
-                    "-map_metadata", "0",
-                    "-y",
-                    "`"$outputFile`""
-                )
+                # 检测源视频编码
+                $sourceCodec = Get-VideoCodec -FilePath $file.FullName
                 
-                # 对于某些格式，可能需要使用软件解码
-                if ($file.Extension -in @('.rm', '.rmvb', '.asf')) {
-                    $ffmpegArgs[1] = "auto"  # 不强制使用CUDA硬件加速解码
+                if ($sourceCodec -and $sourceCodec.IsH264) {
+                    # 源视频已经是H.264，使用流复制（无损、极快）
+                    $ffmpegArgs = @(
+                        "-fflags", "+genpts+discardcorrupt",
+                        "-i", "`"$($file.FullName)`"",
+                        "-c:v", "copy",
+                        "-c:a", "aac",
+                        "-ar", "48000",
+                        "-af", "loudnorm=I=-16:TP=-1.5:LRA=11",
+                        "-map_metadata", "0",
+                        "-bsf:v", "h264_mp4toannexb",
+                        "-movflags", "+faststart",
+                        "-y",
+                        "`"$outputFile`""
+                    )
+                    
+                    Write-Host "  ⚡ 源视频已是H.264，使用无损流复制模式..." -ForegroundColor Cyan
+                } else {
+                    # 非H.264编码，使用GPU加速重新编码
+                    $codecName = if ($sourceCodec) { $sourceCodec.CodecName.ToUpper() } else { "未知" }
+                    Write-Host "  🔄 源编码: $codecName → 重新编码为H.264..." -ForegroundColor Yellow
+                    
+                    $ffmpegArgs = @(
+                        "-fflags", "+genpts+discardcorrupt",
+                        "-hwaccel", "cuda",
+                        "-hwaccel_output_format", "cuda",
+                        "-i", "`"$($file.FullName)`"",
+                        "-c:v", "h264_nvenc",
+                        "-preset", "p4",
+                        "-rc", "vbr",
+                        "-cq", "23",
+                        "-b:v", "0",
+                        "-c:a", "aac",
+                        "-ar", "48000",
+                        "-af", "loudnorm=I=-16:TP=-1.5:LRA=11",
+                        "-map_metadata", "0",
+                        "-movflags", "+faststart",
+                        "-y",
+                        "`"$outputFile`""
+                    )
+                    
+                    # 对于某些格式，可能需要使用软件解码
+                    if ($file.Extension -in @('.rm', '.rmvb', '.asf')) {
+                        $ffmpegArgs[3] = "auto"  # 不强制使用CUDA硬件加速解码
+                    }
                 }
             }
             
