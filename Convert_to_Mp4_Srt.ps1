@@ -554,16 +554,19 @@ if ($nonMp4H264Files.Count -gt 0) {
         try {
             # 根据文件格式选择不同的转换参数
             if ($file.Extension -eq '.m3u8') {
-                # M3U8 (HLS) 流专用参数 - 优先尝试复制流避免重新编码
+                # M3U8 (HLS) 流专用参数 - 视频流复制 + 音频响度标准化
                 $ffmpegArgs = @(
                     "-i", "`"$($file.FullName)`"",
-                    "-c", "copy",
-                    "-bsf:a", "aac_adtstoasc",
+                    "-c:v", "copy",
+                    "-c:a", "aac",
+                    "-ar", "48000",
+                    "-af", "loudnorm=I=-16:TP=-1.5:LRA=11",
+                    "-movflags", "+faststart",
                     "-y",
                     "`"$outputFile`""
                 )
                 
-                Write-Host "  📺 使用HLS流复制模式..." -ForegroundColor Cyan
+                Write-Host "  📺 使用HLS流模式（视频复制 + 音频响度标准化）..." -ForegroundColor Cyan
             } else {
                 # 检测源视频编码
                 $sourceCodec = Get-VideoCodec -FilePath $file.FullName
@@ -660,6 +663,67 @@ if ($nonMp4H264Files.Count -gt 0) {
     }
 } else {
     Write-Host "✅ 所有视频文件已经是MP4 + H.264格式，跳过转换" -ForegroundColor Yellow
+}
+
+# 对已有MP4+H.264文件进行音频响度标准化
+if ($mp4H264Files.Count -gt 0) {
+    Write-Host ""
+    Write-Host "[5.5/6] 对MP4+H.264文件进行音频响度标准化..." -ForegroundColor Green
+    Write-Host "📊 发现 $($mp4H264Files.Count) 个MP4+H.264文件需要音频标准化" -ForegroundColor White
+    
+    $audioSuccessCount = 0
+    $audioFailureCount = 0
+    
+    foreach ($file in $mp4H264Files) {
+        $tempFile = [System.IO.Path]::Combine(
+            [System.IO.Path]::GetDirectoryName($file.FullName),
+            [System.IO.Path]::GetFileNameWithoutExtension($file.FullName) + ".loudnorm.temp.mp4"
+        )
+        
+        Write-Host "🔊 音频标准化: $($file.Name)" -ForegroundColor White
+        
+        try {
+            $ffmpegArgs = @(
+                "-i", "`"$($file.FullName)`"",
+                "-c:v", "copy",
+                "-c:a", "aac",
+                "-ar", "48000",
+                "-af", "loudnorm=I=-16:TP=-1.5:LRA=11",
+                "-map_metadata", "0",
+                "-movflags", "+faststart",
+                "-y",
+                "`"$tempFile`""
+            )
+            
+            $process = Start-Process -FilePath "ffmpeg" -ArgumentList $ffmpegArgs -Wait -PassThru -NoNewWindow
+            
+            if ($process.ExitCode -eq 0 -and (Test-Path $tempFile)) {
+                Remove-Item $file.FullName -Force
+                Move-Item $tempFile $file.FullName
+                Write-Host "✅ 音频标准化完成: $($file.Name)" -ForegroundColor Green
+                $audioSuccessCount++
+            } else {
+                Write-Host "❌ 音频标准化失败: $($file.Name)" -ForegroundColor Red
+                $audioFailureCount++
+                if (Test-Path $tempFile) {
+                    Remove-Item $tempFile -Force
+                }
+            }
+        } catch {
+            Write-Host "❌ 音频标准化出错: $($file.Name) - $($_.Exception.Message)" -ForegroundColor Red
+            $audioFailureCount++
+            if (Test-Path $tempFile) {
+                Remove-Item $tempFile -Force
+            }
+        }
+        Write-Host ""
+    }
+    
+    Write-Host "📊 音频标准化统计:" -ForegroundColor Green
+    Write-Host "  ✅ 成功: $audioSuccessCount 个文件" -ForegroundColor Green
+    if ($audioFailureCount -gt 0) {
+        Write-Host "  ❌ 失败: $audioFailureCount 个文件" -ForegroundColor Red
+    }
 }
 
 # 清理字幕文本的函数
