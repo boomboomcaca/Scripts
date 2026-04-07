@@ -1,4 +1,4 @@
-﻿# GPU加速视频转换 + 字幕清理 + 编码分析工具
+# GPU加速视频转换 + 字幕清理 + 编码分析工具
 
 param(
     [string]$Path = ".",
@@ -600,7 +600,9 @@ if ($nonMp4H264Files.Count -gt 0) {
                         "-i", "`"$($file.FullName)`"",
                         "-c:v", "h264_nvenc",
                         "-preset", "p4",
-                        "-tune", "lossless",
+                        "-tune", "hq",
+                        "-rc", "vbr",
+                        "-cq", "23",
                         "-c:a", "aac",
                         "-ar", "48000",
                         "-af", "loudnorm=I=-16:TP=-1.5:LRA=11",
