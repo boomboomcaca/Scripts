@@ -1,6 +1,6 @@
-# 停止监控脚本并发送通知
+﻿# 停止监控脚本并发送通知
 
-# 通知函数 - 使用 BurntToast 模块或系统气泡
+# 动态载入通知函数
 function Send-ToastNotification {
     param(
         [string]$Title,
@@ -8,7 +8,6 @@ function Send-ToastNotification {
         [string]$Type = "Warning"
     )
     
-    # 使用系统气泡通知（更可靠）
     try {
         Add-Type -AssemblyName System.Windows.Forms
         $balloon = New-Object System.Windows.Forms.NotifyIcon
@@ -33,7 +32,7 @@ Get-Process -Name pwsh, powershell -ErrorAction SilentlyContinue | ForEach-Objec
         $found = $true
         Write-Host "正在停止监控脚本 (PID: $($_.Id))..." -ForegroundColor Yellow
         
-        # 先发送通知
+        # 发送通知
         Send-ToastNotification -Title "监控脚本已退出" -Message "文件夹监控已停止运行" -Type "Warning"
         
         # 等待通知显示
