@@ -333,6 +333,74 @@ function Test-NSFWContent {
     }
 }
 
+# 音频响度标准化配置（与 Convert_to_Mp4_Srt.ps1 保持一致）
+$loudnormFilter = "loudnorm=I=-16:TP=-1.5:LRA=11"
+
+# 检查 MP4 是否已做过响度标准化（通过 metadata 标记判断，避免重复重编码）
+function Test-LoudnormApplied {
+    param([string]$FilePath)
+
+    try {
+        $tag = ffprobe -v quiet -show_entries format_tags=loudnorm_applied -of default=nw=1:nk=1 "$FilePath" 2>$null
+        return ("$tag".Trim() -eq "1")
+    }
+    catch {
+        return $false
+    }
+}
+
+# 对 MP4 做一次音频响度标准化：视频流直接复制（不重编码、无画质损失），
+# 仅重编码音频，并写入 loudnorm_applied=1 标记，防止后续再次处理
+function Invoke-AudioLoudnorm {
+    param([string]$FilePath)
+
+    if (Test-LoudnormApplied -FilePath $FilePath) {
+        Write-Host "  🔉 已标准化过，跳过: $([System.IO.Path]::GetFileName($FilePath))" -ForegroundColor DarkGray
+        return $true
+    }
+
+    $tempFile = [System.IO.Path]::Combine(
+        [System.IO.Path]::GetDirectoryName($FilePath),
+        [System.IO.Path]::GetFileNameWithoutExtension($FilePath) + ".loudnorm.temp.mp4"
+    )
+
+    Write-Host "  🔊 音频响度标准化: $([System.IO.Path]::GetFileName($FilePath))" -ForegroundColor White
+
+    try {
+        $ffmpegArgs = @(
+            "-i", "`"$FilePath`"",
+            "-c:v", "copy",
+            "-c:a", "aac",
+            "-ar", "48000",
+            "-af", $loudnormFilter,
+            "-map_metadata", "0",
+            "-metadata", "loudnorm_applied=1",
+            "-movflags", "+faststart",
+            "-y",
+            "`"$tempFile`""
+        )
+
+        $process = Start-Process -FilePath "ffmpeg" -ArgumentList $ffmpegArgs -Wait -PassThru -NoNewWindow
+
+        if ($process.ExitCode -eq 0 -and (Test-Path $tempFile)) {
+            Remove-Item -LiteralPath $FilePath -Force
+            Move-Item -LiteralPath $tempFile -Destination $FilePath
+            Write-Host "  ✅ 音频标准化完成" -ForegroundColor Green
+            return $true
+        }
+        else {
+            Write-Host "  ❌ 音频标准化失败，保留原文件继续移动" -ForegroundColor Red
+            if (Test-Path $tempFile) { Remove-Item -LiteralPath $tempFile -Force }
+            return $false
+        }
+    }
+    catch {
+        Write-Host "  ⚠️ 音频标准化出错，保留原文件继续移动: $($_.Exception.Message)" -ForegroundColor Yellow
+        if (Test-Path $tempFile) { Remove-Item -LiteralPath $tempFile -Force }
+        return $false
+    }
+}
+
 # 智能移动函数（带 NSFW 检测）
 function Move-MediaFileWithNSFWDetection {
     param(
@@ -345,6 +413,9 @@ function Move-MediaFileWithNSFWDetection {
     
     # 只对 MP4 视频进行 NSFW 检测
     if ($ext -eq '.mp4') {
+        # 移动前先做音频响度标准化（带标记，避免重复处理）
+        Invoke-AudioLoudnorm -FilePath $sourceFile | Out-Null
+
         $isNSFW = Test-NSFWContent -VideoPath $sourceFile
         $destPath = if ($isNSFW) { $networkPathNSFW } else { $networkPathSafe }
         $categoryLabel = if ($isNSFW) { "Scenes (NSFW)" } else { "Movies (普通)" }

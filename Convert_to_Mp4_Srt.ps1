@@ -562,10 +562,11 @@ if ($nonMp4H264Files.Count -gt 0) {
                     "-ar", "48000",
                     "-af", "loudnorm=I=-16:TP=-1.5:LRA=11",
                     "-movflags", "+faststart",
+                    "-metadata", "loudnorm_applied=1",
                     "-y",
                     "`"$outputFile`""
                 )
-                
+
                 Write-Host "  📺 使用HLS流模式（视频复制 + 音频响度标准化）..." -ForegroundColor Cyan
             } else {
                 # 检测源视频编码
@@ -583,10 +584,11 @@ if ($nonMp4H264Files.Count -gt 0) {
                         "-map_metadata", "0",
                         "-bsf:v", "h264_mp4toannexb",
                         "-movflags", "+faststart",
+                        "-metadata", "loudnorm_applied=1",
                         "-y",
                         "`"$outputFile`""
                     )
-                    
+
                     Write-Host "  ⚡ 源视频已是H.264，使用无损流复制模式..." -ForegroundColor Cyan
                 } else {
                     # 非H.264编码，使用GPU加速重新编码
@@ -608,10 +610,11 @@ if ($nonMp4H264Files.Count -gt 0) {
                         "-af", "loudnorm=I=-16:TP=-1.5:LRA=11",
                         "-map_metadata", "0",
                         "-movflags", "+faststart",
+                        "-metadata", "loudnorm_applied=1",
                         "-y",
                         "`"$outputFile`""
                     )
-                    
+
                     # 对于某些格式，可能需要使用软件解码
                     if ($file.Extension -in @('.rm', '.rmvb', '.asf')) {
                         $ffmpegArgs[3] = "auto"  # 不强制使用CUDA硬件加速解码
@@ -675,13 +678,22 @@ if ($mp4H264Files.Count -gt 0) {
     $audioFailureCount = 0
     
     foreach ($file in $mp4H264Files) {
+        # 已标准化过的文件跳过，避免重复重编码
+        try {
+            $existingTag = ffprobe -v quiet -show_entries format_tags=loudnorm_applied -of default=nw=1:nk=1 "$($file.FullName)" 2>$null
+            if ("$existingTag".Trim() -eq "1") {
+                Write-Host "🔉 已标准化过，跳过: $($file.Name)" -ForegroundColor DarkGray
+                continue
+            }
+        } catch { }
+
         $tempFile = [System.IO.Path]::Combine(
             [System.IO.Path]::GetDirectoryName($file.FullName),
             [System.IO.Path]::GetFileNameWithoutExtension($file.FullName) + ".loudnorm.temp.mp4"
         )
-        
+
         Write-Host "🔊 音频标准化: $($file.Name)" -ForegroundColor White
-        
+
         try {
             $ffmpegArgs = @(
                 "-i", "`"$($file.FullName)`"",
@@ -690,6 +702,7 @@ if ($mp4H264Files.Count -gt 0) {
                 "-ar", "48000",
                 "-af", "loudnorm=I=-16:TP=-1.5:LRA=11",
                 "-map_metadata", "0",
+                "-metadata", "loudnorm_applied=1",
                 "-movflags", "+faststart",
                 "-y",
                 "`"$tempFile`""
