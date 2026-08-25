@@ -68,6 +68,8 @@ GPU加速视频转换 + 字幕清理 + 编码分析工具
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $Host.UI.RawUI.WindowTitle = "GPU加速视频转换 + 字幕清理 + 编码分析工具"
 
+. (Join-Path $PSScriptRoot "MediaAudio.ps1")
+
 # 标题里常自带 .mp4（如下载文件名为 "xxx.mp4.ts"）。ChangeExtension 只替换最后一个后缀，
 # 会得到 xxx.mp4.mp4。生成输出路径前先去掉标题中多余的 .mp4。
 function Get-MediaOutputPath {
@@ -129,6 +131,7 @@ function Get-VideoCodec {
     try {
         $ffprobeOutput = ffprobe -v quiet -print_format json -show_streams "$FilePath" 2>&1 | ConvertFrom-Json
         $videoStream = $ffprobeOutput.streams | Where-Object { $_.codec_type -eq "video" } | Select-Object -First 1
+        $audioStream = $ffprobeOutput.streams | Where-Object { $_.codec_type -eq "audio" } | Select-Object -First 1
         
         if ($videoStream) {
             $codecName = $videoStream.codec_name
@@ -198,6 +201,7 @@ function Get-VideoCodec {
                 IsProfessional = $codecName -in $professionalCodecs
                 IsLossless = $codecName -in $losslessCodecs
                 IsRaw = $codecName -in $rawCodecs
+                AudioCodec = if ($audioStream) { $audioStream.codec_name } else { $null }
             }
         } else {
             return $null
@@ -616,51 +620,40 @@ if ($nonMp4H264Files.Count -gt 0) {
         }
         
         try {
+            $audioArgs = Get-LoudnormAudioFfmpegArgs -FilePath $file.FullName
+
             # 根据文件格式选择不同的转换参数
             if ($file.Extension -eq '.m3u8') {
-                # M3U8 (HLS) 流专用参数 - 视频流复制 + 音频响度标准化
                 $ffmpegArgs = @(
                     "-i", "`"$($file.FullName)`"",
-                    "-c:v", "copy",
-                    "-c:a", "aac",
-                    "-ar", "48000",
-                    "-af", "loudnorm=I=-16:TP=-1.5:LRA=11",
+                    "-c:v", "copy"
+                ) + $audioArgs + @(
                     "-movflags", "+faststart",
-                    "-metadata", "loudnorm_applied=1",
                     "-y",
                     "`"$outputFile`""
                 )
 
-                Write-Host "  📺 使用HLS流模式（视频复制 + 音频响度标准化）..." -ForegroundColor Cyan
+                Write-Host "  📺 HLS：视频复制 + 音频响度标准化..." -ForegroundColor Cyan
             } else {
-                # 检测源视频编码
                 $sourceCodec = Get-VideoCodec -FilePath $file.FullName
                 
                 if ($sourceCodec -and $sourceCodec.IsH264) {
-                    # 源视频已经是H.264，使用流复制（无损、极快）
                     $ffmpegArgs = @(
-                        "-fflags", "+genpts+discardcorrupt",
                         "-i", "`"$($file.FullName)`"",
-                        "-c:v", "copy",
-                        "-c:a", "aac",
-                        "-ar", "48000",
-                        "-af", "loudnorm=I=-16:TP=-1.5:LRA=11",
+                        "-c:v", "copy"
+                    ) + $audioArgs + @(
                         "-map_metadata", "0",
-                        "-bsf:v", "h264_mp4toannexb",
                         "-movflags", "+faststart",
-                        "-metadata", "loudnorm_applied=1",
                         "-y",
                         "`"$outputFile`""
                     )
 
-                    Write-Host "  ⚡ 源视频已是H.264，使用无损流复制模式..." -ForegroundColor Cyan
+                    Write-Host "  ⚡ 源视频已是H.264，视频复制 + 音频响度标准化..." -ForegroundColor Cyan
                 } else {
-                    # 非H.264编码，使用GPU加速重新编码
                     $codecName = if ($sourceCodec) { $sourceCodec.CodecName.ToUpper() } else { "未知" }
-                    Write-Host "  🔄 源编码: $codecName → 重新编码为H.264..." -ForegroundColor Yellow
+                    Write-Host "  🔄 源编码: $codecName → 重新编码为H.264 + 音频响度标准化..." -ForegroundColor Yellow
                     
                     $ffmpegArgs = @(
-                        "-fflags", "+genpts+discardcorrupt",
                         "-hwaccel", "cuda",
                         "-hwaccel_output_format", "cuda",
                         "-i", "`"$($file.FullName)`"",
@@ -668,20 +661,16 @@ if ($nonMp4H264Files.Count -gt 0) {
                         "-preset", "p4",
                         "-tune", "hq",
                         "-rc", "vbr",
-                        "-cq", "23",
-                        "-c:a", "aac",
-                        "-ar", "48000",
-                        "-af", "loudnorm=I=-16:TP=-1.5:LRA=11",
+                        "-cq", "23"
+                    ) + $audioArgs + @(
                         "-map_metadata", "0",
                         "-movflags", "+faststart",
-                        "-metadata", "loudnorm_applied=1",
                         "-y",
                         "`"$outputFile`""
                     )
 
-                    # 对于某些格式，可能需要使用软件解码
                     if ($file.Extension -in @('.rm', '.rmvb', '.asf')) {
-                        $ffmpegArgs[3] = "auto"  # 不强制使用CUDA硬件加速解码
+                        $ffmpegArgs[1] = "auto"
                     }
                 }
             }
@@ -689,6 +678,16 @@ if ($nonMp4H264Files.Count -gt 0) {
             $process = Start-Process -FilePath "ffmpeg" -ArgumentList $ffmpegArgs -Wait -PassThru -NoNewWindow
             
             if ($process.ExitCode -eq 0) {
+                if (-not (Test-AudioStreamHealthy -FilePath $outputFile)) {
+                    Write-Host "❌ 输出音频校验失败，保留源文件: $($file.Name)" -ForegroundColor Red
+                    $failureCount++
+                    if (Test-Path -LiteralPath $outputFile) {
+                        Remove-Item -LiteralPath $outputFile -Force
+                    }
+                    Write-Host ""
+                    continue
+                }
+
                 Write-Host "✅ 成功转换: $($file.Name)" -ForegroundColor Green
                 $successCount++
                 
@@ -732,7 +731,7 @@ if ($nonMp4H264Files.Count -gt 0) {
     Write-Host "✅ 所有视频文件已经是MP4 + H.264格式，跳过转换" -ForegroundColor Yellow
 }
 
-# 对已有MP4+H.264文件进行音频响度标准化
+# 对已有MP4+H.264文件进行两遍音频响度标准化
 if ($mp4H264Files.Count -gt 0) {
     Write-Host ""
     Write-Host "[5.5/6] 对MP4+H.264文件进行音频响度标准化..." -ForegroundColor Green
@@ -742,56 +741,10 @@ if ($mp4H264Files.Count -gt 0) {
     $audioFailureCount = 0
     
     foreach ($file in $mp4H264Files) {
-        # 已标准化过的文件跳过，避免重复重编码
-        try {
-            $existingTag = ffprobe -v quiet -show_entries format_tags=loudnorm_applied -of default=nw=1:nk=1 "$($file.FullName)" 2>$null
-            if ("$existingTag".Trim() -eq "1") {
-                Write-Host "🔉 已标准化过，跳过: $($file.Name)" -ForegroundColor DarkGray
-                continue
-            }
-        } catch { }
-
-        $tempFile = [System.IO.Path]::Combine(
-            [System.IO.Path]::GetDirectoryName($file.FullName),
-            [System.IO.Path]::GetFileNameWithoutExtension($file.FullName) + ".loudnorm.temp.mp4"
-        )
-
-        Write-Host "🔊 音频标准化: $($file.Name)" -ForegroundColor White
-
-        try {
-            $ffmpegArgs = @(
-                "-i", "`"$($file.FullName)`"",
-                "-c:v", "copy",
-                "-c:a", "aac",
-                "-ar", "48000",
-                "-af", "loudnorm=I=-16:TP=-1.5:LRA=11",
-                "-map_metadata", "0",
-                "-metadata", "loudnorm_applied=1",
-                "-movflags", "+faststart",
-                "-y",
-                "`"$tempFile`""
-            )
-            
-            $process = Start-Process -FilePath "ffmpeg" -ArgumentList $ffmpegArgs -Wait -PassThru -NoNewWindow
-            
-            if ($process.ExitCode -eq 0 -and (Test-Path $tempFile)) {
-                Remove-Item $file.FullName -Force
-                Move-Item $tempFile $file.FullName
-                Write-Host "✅ 音频标准化完成: $($file.Name)" -ForegroundColor Green
-                $audioSuccessCount++
-            } else {
-                Write-Host "❌ 音频标准化失败: $($file.Name)" -ForegroundColor Red
-                $audioFailureCount++
-                if (Test-Path $tempFile) {
-                    Remove-Item $tempFile -Force
-                }
-            }
-        } catch {
-            Write-Host "❌ 音频标准化出错: $($file.Name) - $($_.Exception.Message)" -ForegroundColor Red
+        if (Invoke-TwoPassAudioLoudnorm -FilePath $file.FullName) {
+            $audioSuccessCount++
+        } else {
             $audioFailureCount++
-            if (Test-Path $tempFile) {
-                Remove-Item $tempFile -Force
-            }
         }
         Write-Host ""
     }
@@ -799,7 +752,7 @@ if ($mp4H264Files.Count -gt 0) {
     Write-Host "📊 音频标准化统计:" -ForegroundColor Green
     Write-Host "  ✅ 成功: $audioSuccessCount 个文件" -ForegroundColor Green
     if ($audioFailureCount -gt 0) {
-        Write-Host "  ❌ 失败: $audioFailureCount 个文件" -ForegroundColor Red
+        Write-Host "  ❌ 失败（已保留原音轨）: $audioFailureCount 个文件" -ForegroundColor Red
     }
 }
 

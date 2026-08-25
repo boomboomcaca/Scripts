@@ -63,6 +63,8 @@ else {
     exit 1
 }
 
+. (Join-Path $PSScriptRoot "MediaAudio.ps1")
+
 # 等待监控路径就绪（开机时可能需要等待）
 $retryCount = 0
 while (-not (Test-Path $watchPath)) {
@@ -231,8 +233,9 @@ function Invoke-MediaFileProcessing {
         $name = $file.Name
         $ext = $file.Extension.ToLower()
         
-        # 忽略临时文件
-        if ($name -match '\.(tmp|partial|!qB|crdownload)$') { continue }
+        # 忽略未下完的临时文件
+        if ($name -match '\.(tmp|partial|!qB|crdownload|part|ytdl|aria2|download)$') { continue }
+        if ($name -match '\.(temp|loudnorm\.temp)\.') { continue }
         
         # 检查文件是否被占用 (锁定)
         try {
@@ -393,72 +396,10 @@ function Test-NSFWContent {
     }
 }
 
-# 音频响度标准化配置（与 Convert_to_Mp4_Srt.ps1 保持一致）
-$loudnormFilter = "loudnorm=I=-16:TP=-1.5:LRA=11"
-
-# 检查 MP4 是否已做过响度标准化（通过 metadata 标记判断，避免重复重编码）
-function Test-LoudnormApplied {
-    param([string]$FilePath)
-
-    try {
-        $tag = ffprobe -v quiet -show_entries format_tags=loudnorm_applied -of default=nw=1:nk=1 "$FilePath" 2>$null
-        return ("$tag".Trim() -eq "1")
-    }
-    catch {
-        return $false
-    }
-}
-
-# 对 MP4 做一次音频响度标准化：视频流直接复制（不重编码、无画质损失），
-# 仅重编码音频，并写入 loudnorm_applied=1 标记，防止后续再次处理
+# 两遍响度标准化（测量后再应用，编码后校验音轨，失败则保留原文件）
 function Invoke-AudioLoudnorm {
     param([string]$FilePath)
-
-    if (Test-LoudnormApplied -FilePath $FilePath) {
-        Write-Host "  🔉 已标准化过，跳过: $([System.IO.Path]::GetFileName($FilePath))" -ForegroundColor DarkGray
-        return $true
-    }
-
-    $tempFile = [System.IO.Path]::Combine(
-        [System.IO.Path]::GetDirectoryName($FilePath),
-        [System.IO.Path]::GetFileNameWithoutExtension($FilePath) + ".loudnorm.temp.mp4"
-    )
-
-    Write-Host "  🔊 音频响度标准化: $([System.IO.Path]::GetFileName($FilePath))" -ForegroundColor White
-
-    try {
-        $ffmpegArgs = @(
-            "-i", "`"$FilePath`"",
-            "-c:v", "copy",
-            "-c:a", "aac",
-            "-ar", "48000",
-            "-af", $loudnormFilter,
-            "-map_metadata", "0",
-            "-metadata", "loudnorm_applied=1",
-            "-movflags", "+faststart",
-            "-y",
-            "`"$tempFile`""
-        )
-
-        $process = Start-Process -FilePath "ffmpeg" -ArgumentList $ffmpegArgs -Wait -PassThru -NoNewWindow
-
-        if ($process.ExitCode -eq 0 -and (Test-Path $tempFile)) {
-            Remove-Item -LiteralPath $FilePath -Force
-            Move-Item -LiteralPath $tempFile -Destination $FilePath
-            Write-Host "  ✅ 音频标准化完成" -ForegroundColor Green
-            return $true
-        }
-        else {
-            Write-Host "  ❌ 音频标准化失败，保留原文件继续移动" -ForegroundColor Red
-            if (Test-Path $tempFile) { Remove-Item -LiteralPath $tempFile -Force }
-            return $false
-        }
-    }
-    catch {
-        Write-Host "  ⚠️ 音频标准化出错，保留原文件继续移动: $($_.Exception.Message)" -ForegroundColor Yellow
-        if (Test-Path $tempFile) { Remove-Item -LiteralPath $tempFile -Force }
-        return $false
-    }
+    return Invoke-TwoPassAudioLoudnorm -FilePath $FilePath
 }
 
 # 智能移动函数（带 NSFW 检测）
@@ -533,7 +474,11 @@ if ($filesToConvert.Count -gt 0) {
 }
 
 # 处理已存在的 MP4 和 SRT 文件（移动到网络目录）
-$existingFiles = Get-ChildItem -Path $watchPath -File -Recurse -ErrorAction SilentlyContinue | Where-Object { $_.Extension -eq '.mp4' -or $_.Extension -eq '.srt' }
+$existingFiles = Get-ChildItem -Path $watchPath -File -Recurse -ErrorAction SilentlyContinue | Where-Object {
+    ($_.Extension -eq '.mp4' -or $_.Extension -eq '.srt') -and
+    $_.Name -notmatch '\.(tmp|partial|!qB|crdownload|part|ytdl|aria2|download)$' -and
+    $_.Name -notmatch '\.(temp|loudnorm\.temp)\.'
+}
 if ($existingFiles.Count -gt 0) {
     Write-Host "找到 $($existingFiles.Count) 个 MP4/SRT 文件需要移动" -ForegroundColor Yellow
     Write-Host ""
@@ -584,7 +529,8 @@ $onCreated = Register-ObjectEvent -InputObject $watcher -EventName "Created" -Ac
     $name = $Event.SourceEventArgs.Name
     
     # 忽略临时文件
-    if ($name -match '\.(tmp|partial|!qB|crdownload)$' -or 
+    if ($name -match '\.(tmp|partial|!qB|crdownload|part|ytdl|aria2|download)$' -or
+        $name -match '\.(temp|loudnorm\.temp)\.' -or
         $name -match 'Convert_to_Mp4_Srt|Watch_Downloads|Convert_Subtitle_to_Srt') {
         return
     }
