@@ -156,6 +156,60 @@ function Test-LinuxDiskSpace {
 # 全局变量：跟踪上次轮询时间
 $script:lastPollTime = Get-Date
 
+# 标题里常自带 .mp4（如下载文件名为 "xxx.mp4.ts"）。ChangeExtension 只替换最后一个后缀，
+# 会得到 xxx.mp4.mp4。生成输出路径前先去掉标题中多余的 .mp4。
+function Get-MediaOutputPath {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$FilePath,
+        [Parameter(Mandatory = $true)]
+        [string]$NewExtension
+    )
+
+    $directory = [System.IO.Path]::GetDirectoryName($FilePath)
+    $name = [System.IO.Path]::GetFileNameWithoutExtension($FilePath)
+
+    while ($name -like '*.mp4') {
+        $name = [System.IO.Path]::GetFileNameWithoutExtension($name)
+    }
+
+    if (-not $NewExtension.StartsWith('.')) {
+        $NewExtension = ".$NewExtension"
+    }
+
+    if ([string]::IsNullOrEmpty($directory)) {
+        return $name + $NewExtension
+    }
+    return [System.IO.Path]::Combine($directory, $name + $NewExtension)
+}
+
+function Repair-RedundantMp4Extension {
+    param([string]$RootPath = ".")
+
+    $files = Get-ChildItem -Path $RootPath -Recurse -File -ErrorAction SilentlyContinue | Where-Object {
+        $_.Extension -match '^\.(mp4|srt)$' -and $_.BaseName -like '*.mp4'
+    }
+
+    foreach ($file in $files) {
+        $cleanedPath = Get-MediaOutputPath -FilePath $file.FullName -NewExtension $file.Extension
+        if ($cleanedPath -eq $file.FullName) { continue }
+
+        $newName = [System.IO.Path]::GetFileName($cleanedPath)
+        if (Test-Path -LiteralPath $cleanedPath) {
+            Write-Host "⚠️  跳过重命名（目标已存在）: $($file.Name) -> $newName" -ForegroundColor Yellow
+            continue
+        }
+
+        try {
+            Rename-Item -LiteralPath $file.FullName -NewName $newName
+            Write-Host "✏️  已去掉重复.mp4后缀: $($file.Name) -> $newName" -ForegroundColor Cyan
+        }
+        catch {
+            Write-Host "⚠️  重命名失败: $($file.Name) - $($_.Exception.Message)" -ForegroundColor Yellow
+        }
+    }
+}
+
 # 定义文件处理函数
 function Invoke-MediaFileProcessing {
     param(
@@ -165,6 +219,8 @@ function Invoke-MediaFileProcessing {
         [bool]$Silent = $false
     )
     
+    Repair-RedundantMp4Extension -RootPath $WatchPath
+
     $files = Get-ChildItem -Path $WatchPath -File -Recurse -ErrorAction SilentlyContinue
     if (-not $files) { return $false }
     
@@ -192,7 +248,7 @@ function Invoke-MediaFileProcessing {
         if ($ext -eq '.srt' -or $ext -eq '.mp4') {
             # 对于 SRT 文件，如果对应的 MP4 还在这（可能还没转换完或没有传完），先不动（避免竞态）
             if ($ext -eq '.srt') {
-                $mp4Name = [System.IO.Path]::ChangeExtension($name, ".mp4")
+                $mp4Name = [System.IO.Path]::GetFileName((Get-MediaOutputPath -FilePath $name -NewExtension ".mp4"))
                 if (Test-Path (Join-Path $file.DirectoryName $mp4Name)) {
                     continue
                 }
@@ -248,7 +304,11 @@ function Move-MediaFile {
     )
     
     $sourceFile = Join-Path $SourcePath $FileName
-    $destinationFile = Join-Path $DestPath $FileName
+    $cleanName = [System.IO.Path]::GetFileName((Get-MediaOutputPath -FilePath $FileName -NewExtension ([System.IO.Path]::GetExtension($FileName))))
+    $destinationFile = Join-Path $DestPath $cleanName
+    if ($cleanName -ne $FileName) {
+        Write-Host "  ✏️ 目标文件名: $cleanName" -ForegroundColor DarkGray
+    }
     
     try {
         if (-not (Test-Path $DestPath)) {
@@ -422,7 +482,7 @@ function Move-MediaFileWithNSFWDetection {
     }
     else {
         # SRT 字幕文件：查找对应的 MP4 文件的位置
-        $mp4Name = [System.IO.Path]::ChangeExtension($FileName, ".mp4")
+        $mp4Name = [System.IO.Path]::GetFileName((Get-MediaOutputPath -FilePath $FileName -NewExtension ".mp4"))
         $mp4InNSFW = Join-Path $networkPathNSFW $mp4Name
         $mp4InSafe = Join-Path $networkPathSafe $mp4Name
         

@@ -57,6 +57,32 @@ if ($Help) {
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $Host.UI.RawUI.WindowTitle = "通用字幕格式转换工具"
 
+# 标题里常自带 .mp4（如 "xxx.mp4.vtt"），避免转成 xxx.mp4.srt
+function Get-MediaOutputPath {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$FilePath,
+        [Parameter(Mandatory = $true)]
+        [string]$NewExtension
+    )
+
+    $directory = [System.IO.Path]::GetDirectoryName($FilePath)
+    $name = [System.IO.Path]::GetFileNameWithoutExtension($FilePath)
+
+    while ($name -like '*.mp4') {
+        $name = [System.IO.Path]::GetFileNameWithoutExtension($name)
+    }
+
+    if (-not $NewExtension.StartsWith('.')) {
+        $NewExtension = ".$NewExtension"
+    }
+
+    if ([string]::IsNullOrEmpty($directory)) {
+        return $name + $NewExtension
+    }
+    return [System.IO.Path]::Combine($directory, $name + $NewExtension)
+}
+
 Write-Host "==========================================" -ForegroundColor Cyan
 Write-Host "   通用字幕格式转换工具 → SRT" -ForegroundColor Cyan
 Write-Host "==========================================" -ForegroundColor Cyan
@@ -281,7 +307,7 @@ foreach ($file in $allSubtitleFiles) {
         $file.Name
     }
     
-    $outputFile = [System.IO.Path]::ChangeExtension($file.FullName, "srt")
+    $outputFile = Get-MediaOutputPath -FilePath $file.FullName -NewExtension "srt"
     
     # 检查是否已存在SRT文件
     if (Test-Path $outputFile) {

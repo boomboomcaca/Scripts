@@ -68,6 +68,60 @@ GPU加速视频转换 + 字幕清理 + 编码分析工具
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $Host.UI.RawUI.WindowTitle = "GPU加速视频转换 + 字幕清理 + 编码分析工具"
 
+# 标题里常自带 .mp4（如下载文件名为 "xxx.mp4.ts"）。ChangeExtension 只替换最后一个后缀，
+# 会得到 xxx.mp4.mp4。生成输出路径前先去掉标题中多余的 .mp4。
+function Get-MediaOutputPath {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$FilePath,
+        [Parameter(Mandatory = $true)]
+        [string]$NewExtension
+    )
+
+    $directory = [System.IO.Path]::GetDirectoryName($FilePath)
+    $name = [System.IO.Path]::GetFileNameWithoutExtension($FilePath)
+
+    while ($name -like '*.mp4') {
+        $name = [System.IO.Path]::GetFileNameWithoutExtension($name)
+    }
+
+    if (-not $NewExtension.StartsWith('.')) {
+        $NewExtension = ".$NewExtension"
+    }
+
+    if ([string]::IsNullOrEmpty($directory)) {
+        return $name + $NewExtension
+    }
+    return [System.IO.Path]::Combine($directory, $name + $NewExtension)
+}
+
+function Repair-RedundantMp4Extension {
+    param([string]$RootPath = ".")
+
+    $files = Get-ChildItem -Path $RootPath -Recurse -File -ErrorAction SilentlyContinue | Where-Object {
+        $_.Extension -match '^\.(mp4|srt)$' -and $_.BaseName -like '*.mp4'
+    }
+
+    foreach ($file in $files) {
+        $cleanedPath = Get-MediaOutputPath -FilePath $file.FullName -NewExtension $file.Extension
+        if ($cleanedPath -eq $file.FullName) { continue }
+
+        $newName = [System.IO.Path]::GetFileName($cleanedPath)
+        if (Test-Path -LiteralPath $cleanedPath) {
+            Write-Host "⚠️  跳过重命名（目标已存在）: $($file.Name) -> $newName" -ForegroundColor Yellow
+            continue
+        }
+
+        try {
+            Rename-Item -LiteralPath $file.FullName -NewName $newName
+            Write-Host "✏️  已去掉重复.mp4后缀: $($file.Name) -> $newName" -ForegroundColor Cyan
+        }
+        catch {
+            Write-Host "⚠️  重命名失败: $($file.Name) - $($_.Exception.Message)" -ForegroundColor Yellow
+        }
+    }
+}
+
 # 增强的视频编码检测函数
 function Get-VideoCodec {
     param([string]$FilePath)
@@ -369,6 +423,10 @@ try {
 # 定义支持的视频文件格式
 $VideoExtensions = @("*.mp4", "*.ts", "*.avi", "*.mkv", "*.mov", "*.wmv", "*.flv", "*.webm", "*.m4v", "*.3gp", "*.mpg", "*.mpeg", "*.ogv", "*.asf", "*.rm", "*.rmvb", "*.m3u8")
 
+Write-Host ""
+Write-Host "[1.5/6] 清理重复的.mp4后缀..." -ForegroundColor Green
+Repair-RedundantMp4Extension -RootPath "."
+
 # 获取所有视频文件
 Write-Host ""
 Write-Host "[2/6] 扫描视频文件..." -ForegroundColor Green
@@ -536,18 +594,24 @@ if ($nonMp4H264Files.Count -gt 0) {
     $failureCount = 0
     
     foreach ($file in $nonMp4H264Files) {
-        $outputFile = [System.IO.Path]::ChangeExtension($file.FullName, "mp4")
-        
+        $finalMp4Path = Get-MediaOutputPath -FilePath $file.FullName -NewExtension "mp4"
+
         # 如果是同名MP4文件，使用临时文件名
         if ($file.Extension -eq '.mp4') {
-            $outputFile = [System.IO.Path]::ChangeExtension($file.FullName, "temp.mp4")
+            $outputFile = Get-MediaOutputPath -FilePath $file.FullName -NewExtension "temp.mp4"
+        } else {
+            $outputFile = $finalMp4Path
         }
         
-        Write-Host "🔄 转换中: $($file.Name) -> $([System.IO.Path]::GetFileName($outputFile))" -ForegroundColor White
+        Write-Host "🔄 转换中: $($file.Name) -> $([System.IO.Path]::GetFileName($finalMp4Path))" -ForegroundColor White
         
         # 检查输出文件是否已存在
-        if ((Test-Path $outputFile) -and ($file.Extension -ne '.mp4')) {
+        if ($file.Extension -ne '.mp4' -and (Test-Path -LiteralPath $outputFile)) {
             Write-Host "⚠️  目标文件已存在，跳过: $([System.IO.Path]::GetFileName($outputFile))" -ForegroundColor Yellow
+            continue
+        }
+        if ($file.Extension -eq '.mp4' -and $finalMp4Path -ne $file.FullName -and (Test-Path -LiteralPath $finalMp4Path)) {
+            Write-Host "⚠️  目标文件已存在，跳过: $([System.IO.Path]::GetFileName($finalMp4Path))" -ForegroundColor Yellow
             continue
         }
         
@@ -628,11 +692,11 @@ if ($nonMp4H264Files.Count -gt 0) {
                 Write-Host "✅ 成功转换: $($file.Name)" -ForegroundColor Green
                 $successCount++
                 
-                # 如果是MP4文件重新编码，替换原文件
+                # 如果是MP4文件重新编码，替换原文件（同时去掉标题里多余的 .mp4）
                 if ($file.Extension -eq '.mp4') {
-                    Remove-Item $file.FullName -Force
-                    Move-Item $outputFile $file.FullName
-                    Write-Host "✅ 已更新编码格式: $($file.Name)" -ForegroundColor Green
+                    Remove-Item -LiteralPath $file.FullName -Force
+                    Move-Item -LiteralPath $outputFile -Destination $finalMp4Path
+                    Write-Host "✅ 已更新编码格式: $([System.IO.Path]::GetFileName($finalMp4Path))" -ForegroundColor Green
                 } else {
                     # 删除原始文件（如果不是NoDelete模式）
                     if (-not $NoDelete) {
@@ -779,7 +843,7 @@ if ($allSubtitleFiles.Count -gt 0) {
     foreach ($item in $allSubtitleFiles) {
         $file = $item.File
         $format = $item.Format
-        $outputFile = [System.IO.Path]::ChangeExtension($file.FullName, "srt")
+        $outputFile = Get-MediaOutputPath -FilePath $file.FullName -NewExtension "srt"
         
         # 检查是否已存在SRT文件
         if (Test-Path $outputFile) {
@@ -965,7 +1029,7 @@ if ($nsfwPathOK -or $safePathOK) {
                 continue
             }
             
-            $destinationPath = Join-Path $destPath $file.Name
+            $destinationPath = Get-MediaOutputPath -FilePath (Join-Path $destPath $file.Name) -NewExtension $file.Extension
             
             try {
                 if (Test-Path $destinationPath) {
@@ -996,7 +1060,7 @@ if ($nsfwPathOK -or $safePathOK) {
             Write-Host ""
             Write-Host "  📝 处理: $($file.Name)" -ForegroundColor Cyan
             
-            $mp4Name = [System.IO.Path]::ChangeExtension($file.Name, ".mp4")
+            $mp4Name = [System.IO.Path]::GetFileName((Get-MediaOutputPath -FilePath $file.Name -NewExtension ".mp4"))
             $mp4InNSFW = Join-Path $networkPathNSFW $mp4Name
             $mp4InSafe = Join-Path $networkPathSafe $mp4Name
             
@@ -1019,7 +1083,7 @@ if ($nsfwPathOK -or $safePathOK) {
                 continue
             }
             
-            $destinationPath = Join-Path $destPath $file.Name
+            $destinationPath = Get-MediaOutputPath -FilePath (Join-Path $destPath $file.Name) -NewExtension $file.Extension
             
             try {
                 if (Test-Path $destinationPath) {
