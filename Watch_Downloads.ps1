@@ -45,6 +45,19 @@ function Send-ToastNotification {
     }
 }
 
+# 2026-09-14 新增：全程输出留档。脚本以隐藏窗口运行，原先控制台输出全部丢失，
+# 出故障时毫无痕迹（曾因 MediaAudio.ps1 解析失败导致处理全线中断而长期未被发现）。
+$script:LogFile = Join-Path $PSScriptRoot 'watch.log'
+try {
+    if ((Test-Path -LiteralPath $script:LogFile) -and ((Get-Item -LiteralPath $script:LogFile).Length -gt 5MB)) {
+        Move-Item -LiteralPath $script:LogFile -Destination "$($script:LogFile).1" -Force -ErrorAction SilentlyContinue
+    }
+    Start-Transcript -Path $script:LogFile -Append -ErrorAction Stop | Out-Null
+}
+catch {
+    Write-Host "（日志留档启动失败，不影响主流程：$($_.Exception.Message)）" -ForegroundColor DarkGray
+}
+
 # 监控配置
 $watchPath = "D:\Videos"
 $pollIntervalMinutes = 5  # 轮询间隔（分钟），作为 FileSystemWatcher 的备用机制
@@ -244,7 +257,14 @@ function Invoke-MediaFileProcessing {
             $fs.Dispose()
         }
         catch {
-            # 文件被锁定，这轮跳过处理
+            # 2026-09-14：原先静默 continue，文件被长期占用时表现为“什么都没发生”，
+            # 极难定位。改为记录原因（同一文件每 10 分钟最多提示一次，避免刷屏）。
+            if (-not $script:LockNotice) { $script:LockNotice = @{} }
+            $lastNote = $script:LockNotice[$file.FullName]
+            if (-not $lastNote -or ((Get-Date) - $lastNote).TotalMinutes -ge 10) {
+                $script:LockNotice[$file.FullName] = Get-Date
+                Write-Host "[$(Get-Date -Format 'HH:mm:ss')] [跳过] 文件被占用，稍后重试: $name" -ForegroundColor DarkYellow
+            }
             continue
         }
         
@@ -412,6 +432,27 @@ function Move-MediaFileWithNSFWDetection {
     $sourceFile = Join-Path $SourcePath $FileName
     $ext = [System.IO.Path]::GetExtension($FileName).ToLower()
     
+    # 2026-09-14 新增：做任何耗时处理前，先看目标端是否已有同名且不小于本地的副本。
+    # 原先要先跑完音频标准化 + NSFW 检测，才在 Move-MediaFile 里发现“目标已存在”，
+    # 白白浪费数分钟算力；中途一旦被打断，本地源文件就会滞留并每轮重来。
+    foreach ($dp in @($networkPathNSFW, $networkPathSafe)) {
+        $existing = Join-Path $dp $FileName
+        if ((Test-Path -LiteralPath $existing) -and (Test-Path -LiteralPath $sourceFile)) {
+            try {
+                $srcLen = (Get-Item -LiteralPath $sourceFile).Length
+                $dstLen = (Get-Item -LiteralPath $existing).Length
+                if ($dstLen -ge $srcLen) {
+                    Remove-Item -LiteralPath $sourceFile -Force
+                    Write-Host " ✅ 目标端已有副本（$([math]::Round($dstLen/1MB,2))MB ≥ 本地 $([math]::Round($srcLen/1MB,2))MB），已删除本地源文件" -ForegroundColor Green
+                    return $true
+                }
+            }
+            catch {
+                Write-Host " ⚠️ 目标端副本比对失败，转入常规流程: $($_.Exception.Message)" -ForegroundColor Yellow
+            }
+        }
+    }
+
     # 只对 MP4 视频进行 NSFW 检测
     if ($ext -eq '.mp4') {
         # 移动前先做音频响度标准化（带标记，避免重复处理）

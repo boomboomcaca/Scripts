@@ -1,4 +1,4 @@
-# 两遍响度标准化 + 音轨完整性校验（供 Convert_to_Mp4_Srt.ps1 / Watch_Downloads.ps1 共用）
+﻿# 两遍响度标准化 + 音轨完整性校验（供 Convert_to_Mp4_Srt.ps1 / Watch_Downloads.ps1 共用）
 
 $script:LoudnormI = '-16'
 $script:LoudnormTP = '-1.5'
