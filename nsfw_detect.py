@@ -14,6 +14,12 @@ import subprocess
 import argparse
 from pathlib import Path
 
+# 确保在 Windows 控制台及重定向环境下使用 UTF-8 编码
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+if hasattr(sys.stderr, 'reconfigure'):
+    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+
 def check_dependencies():
     """检查并安装依赖"""
     try:
@@ -33,10 +39,15 @@ def extract_frames(video_path: str, frame_count: int = 5) -> list:
         # 获取视频时长
         result = subprocess.run(
             ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", video_path],
-            capture_output=True, text=True
+            capture_output=True, text=True, encoding="utf-8", errors="replace"
         )
-        info = json.loads(result.stdout)
-        duration = float(info.get("format", {}).get("duration", 60))
+        duration = 60.0
+        if result.stdout:
+            try:
+                info = json.loads(result.stdout)
+                duration = float(info.get("format", {}).get("duration", 60))
+            except Exception:
+                duration = 60.0
         
         # 计算帧提取时间点（均匀分布，避开开头和结尾）
         interval = duration / (frame_count + 1)
@@ -133,7 +144,7 @@ def main():
     if not os.path.exists(args.video_path):
         result = {"error": "视频文件不存在", "is_nsfw": False}
         print(json.dumps(result, ensure_ascii=False))
-        sys.exit(1)
+        sys.exit(0)
     
     # 检查依赖
     check_dependencies()
@@ -156,7 +167,7 @@ def main():
         result = {"error": "无法提取视频帧", "is_nsfw": False}
         print(json.dumps(result, ensure_ascii=False))
         cleanup(temp_dir, frames)
-        sys.exit(1)
+        sys.exit(0)
     
     if args.verbose:
         print(f"分析 {len(frames)} 帧...", file=sys.stderr)
@@ -177,7 +188,11 @@ def main():
     cleanup(temp_dir, frames)
     
     # 返回码: 0=非NSFW, 1=NSFW
-    sys.exit(1 if result["is_nsfw"] else 0)
+    sys.exit(1 if result.get("is_nsfw", False) else 0)
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        print(json.dumps({"error": str(e), "is_nsfw": False}, ensure_ascii=False))
+        sys.exit(0)

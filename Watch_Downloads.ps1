@@ -1,4 +1,4 @@
-﻿# 文件夹监控脚本 - 监听文件夹变化并自动执行格式转换脚本
+# 文件夹监控脚本 - 监听文件夹变化并自动执行格式转换脚本
 
 # Windows 通知函数（需要在启动检查前定义）
 function Send-ToastNotification {
@@ -382,12 +382,20 @@ function Test-NSFWContent {
     
     try {
         # 调用 Python NSFW 检测脚本
-        $result = python $nsfwDetectScript $VideoPath 2>&1
+        $rawOutput = python $nsfwDetectScript $VideoPath 2>&1
         $exitCode = $LASTEXITCODE
         
-        # 解析 JSON 结果
-        try {
-            $jsonResult = $result | ConvertFrom-Json
+        # 提取有效 JSON 格式行
+        $jsonStr = $null
+        foreach ($line in ($rawOutput | ForEach-Object { "$_".Trim() })) {
+            if ($line.StartsWith('{') -and $line.EndsWith('}')) {
+                $jsonStr = $line
+                break
+            }
+        }
+        
+        if ($jsonStr) {
+            $jsonResult = $jsonStr | ConvertFrom-Json
             
             if ($jsonResult.is_nsfw) {
                 Write-Host "  🔞 检测结果: NSFW (置信度: $($jsonResult.max_score))" -ForegroundColor Magenta
@@ -398,16 +406,10 @@ function Test-NSFWContent {
                 return $false
             }
         }
-        catch {
-            # 如果 JSON 解析失败，根据退出码判断
-            if ($exitCode -eq 1) {
-                Write-Host "  🔞 检测结果: NSFW" -ForegroundColor Magenta
-                return $true
-            }
-            else {
-                Write-Host "  ✅ 检测结果: 普通内容" -ForegroundColor Green
-                return $false
-            }
+        else {
+            # 未获取到有效 JSON，说明检测异常或环境报错，默认降级为普通内容
+            Write-Host "  ⚠️ NSFW 检测未返回有效结果 (退出码: $exitCode)，默认归类为普通内容" -ForegroundColor Yellow
+            return $false
         }
     }
     catch {
@@ -588,6 +590,8 @@ Send-ToastNotification -Title "监控脚本已启动" -Message "正在监控 $wa
 # 保持脚本运行，同时定期轮询作为备用
 Write-Host "轮询间隔: 每 $pollIntervalMinutes 分钟" -ForegroundColor Gray
 Write-Host ""
+
+$script:lastPollTime = Get-Date
 
 try {
     while ($true) {
